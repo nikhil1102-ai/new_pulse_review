@@ -27,6 +27,8 @@ class PipelineState(TypedDict, total=False):
 
     # ── Phase 2 — Embedding ──────────────────────────────────
     chunks: list[dict]                  # chunked review segments
+    _batches: list[list[dict]]          # internal: batched chunks for JINA API
+    _cached_ids: list[str]             # internal: already-embedded chunk IDs
     embeddings: list[list[float]]       # JINA embedding vectors
     embedding_ids: list[str]            # aligned chunk_ids
 
