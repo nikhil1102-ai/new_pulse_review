@@ -1,0 +1,37 @@
+# Orchestration
+langgraph>=0.2.0
+langchain-core>=0.3.0
+langchain-openai>=0.3.0
+
+# Review fetching (public scraper — no API credentials needed)
+google-play-scraper>=0.0.6.0
+
+# Cleaning & NLP
+langdetect>=1.0.9
+nltk>=3.8.0
+tiktoken>=0.7.0
+
+# Embedding
+requests>=2.31.0
+
+# Clustering
+numpy>=1.26.0
+umap-learn>=0.5.4
+hdbscan>=0.8.33
+scikit-learn>=1.3.0
+
+# Validation
+rapidfuzz>=3.5.0
+
+# Delivery (MCP server on Railway — handles Google Docs + Gmail)
+mcp[cli]>=1.0.0
+
+# Deduplication
+datasketch>=1.6.0
+
+# Utilities
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0

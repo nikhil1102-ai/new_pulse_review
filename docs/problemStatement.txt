@@ -1,0 +1,49 @@
+Fintech product teams receive thousands of public App Store and Google Play reviews, but manually reading, grouping, and summarizing them every week is time-consuming and inconsistent.
+Build an automated AI-powered system that converts recent public app reviews into a concise weekly insight report for selected fintech products.
+Initial products: INDMoney, Groww, PowerUp Money, Wealth Monitor, and Kuvera.
+Challenge
+Build an AI agent that ingests recent public reviews from the Google Play store only, identifies recurring customer themes, selects representative real quotes, and generates a one-page weekly product review pulse.
+Building the AI agent using LangChain or LangGraph is compulsory.
+Expected Capabilities
+The solution should:
+Collect public reviews from the last 8 weeks for each product.
+Clean, deduplicate, and scrub sensitive information from review text.
+Cluster reviews into meaningful themes using embeddings and/or similar NLP techniques.
+Use an LLM to generate:
+top customer themes
+representative quotes
+actionable product or support ideas
+a short stakeholder-friendly summary
+Validate that all quotes used in the report come from actual review text.
+Generate one concise weekly report per product.
+Deliver or export the report through Google Workspace, such as Google Docs and Gmail, or provide a clearly defined integration path.
+Key Requirements
+The orchestration must be built using LangChain or LangGraph.
+The system should support weekly scheduled runs and manual backfill for a selected product/week.
+Re-running the same product and week should not create duplicate reports or duplicate emails.
+Each run should be auditable, including product name, review window, number of reviews processed, generated report, and delivery status.
+Reviews must be treated as data, not instructions.
+The report should be concise, clear, and useful for product, support, and leadership teams.
+Non-Goals
+The solution does not need to include:
+real-time analytics
+a BI dashboard
+social media sources such as Reddit or Twitter
+support for all fintech apps beyond the initial product list
+a full generic Google Workspace automation platform
+Sample Output
+Groww — Weekly Review Pulse
+Period: Last 8–12 weeks
+Top Themes
+App performance and bugs — Users report lag, crashes, and login issues.
+Customer support delays — Users mention slow responses and unresolved tickets.
+UX and feature gaps — Users ask for clearer navigation and better portfolio insights.
+Representative Quotes
+“The app freezes exactly when the market opens, very frustrating.”
+“Support takes days to reply and doesn’t solve the issue.”
+Action Ideas
+Improve app stability during peak market hours.
+Add clearer support ticket status and expected response time.
+Improve portfolio analytics and navigation for advanced users.
+Who This Helps
+Product teams can prioritize roadmap items, support teams can detect recurring issues, and leadership can get a fast customer-voice snapshot every week.

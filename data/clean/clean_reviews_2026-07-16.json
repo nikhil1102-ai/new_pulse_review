@@ -1,0 +1,12 @@
+[
+  {
+    "review_id": "r1",
+    "original_text": "Email Me At [EMAIL] Please",
+    "cleaned_text": "email me at [EMAIL] please",
+    "rating": 5,
+    "date": "2026-08-15",
+    "author_name": "TestUser",
+    "thumbs_up_count": 5,
+    "app_version": "5.6.1"
+  }
+]
