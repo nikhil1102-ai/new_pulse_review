@@ -61,6 +61,6 @@ def batch_prepare(state: PipelineState) -> dict:
     # (all chunks are needed for metadata; batches are for the embed node)
     return {
         "chunks": chunks,  # preserve all chunks (including cached)
-        "_batches": batches,  # internal: only new chunks, batched
-        "_cached_ids": list(cached_ids),
+        "embed_batches": batches,  # only new chunks, batched
+        "embed_cached_ids": list(cached_ids),
     }

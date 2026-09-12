@@ -75,8 +75,8 @@ def embed(state: PipelineState) -> dict:
             state["chunks"] — all chunks (for metadata alignment)
     Output: {"embeddings": list[list[float]], "embedding_ids": list[str]}
     """
-    batches = state.get("_batches", [])
-    cached_ids = set(state.get("_cached_ids", []))
+    batches = state.get("embed_batches", [])
+    cached_ids = set(state.get("embed_cached_ids", []))
 
     all_embeddings: list[list[float]] = []
     all_ids: list[str] = []

@@ -112,8 +112,8 @@ class TestBatchPrepare:
         state = {"chunks": chunks, "week_start": "2026-07-16"}
         result = batch_prepare(state)
 
-        assert "_batches" in result
-        total_in_batches = sum(len(b) for b in result["_batches"])
+        assert "embed_batches" in result
+        total_in_batches = sum(len(b) for b in result["embed_batches"])
         assert total_in_batches == 10
 
     def test_skips_cached_chunks(self, tmp_path):
@@ -133,14 +133,14 @@ class TestBatchPrepare:
             result = batch_prepare(state)
 
         # Only r1 should be in batches
-        batched_ids = [c["chunk_id"] for b in result["_batches"] for c in b]
+        batched_ids = [c["chunk_id"] for b in result["embed_batches"] for c in b]
         assert "r0_chunk_0" not in batched_ids
         assert "r1_chunk_0" in batched_ids
 
     def test_empty_input(self):
         state = {"chunks": [], "week_start": "2026-07-16"}
         result = batch_prepare(state)
-        assert result["_batches"] == []
+        assert result["embed_batches"] == []
 
 
 # ══════════════════════════════════════════════════════════════
@@ -160,7 +160,7 @@ class TestEmbed:
                 {"chunk_id": "r1_chunk_0", "chunk_text": "text 1"},
             ]
         ]
-        state = {"_batches": batches, "_cached_ids": []}
+        state = {"embed_batches": batches, "embed_cached_ids": []}
         result = embed(state)
 
         assert len(result["embeddings"]) == 2
@@ -169,7 +169,7 @@ class TestEmbed:
 
     def test_empty_batches(self):
         """No batches → no API calls, empty output."""
-        state = {"_batches": [], "_cached_ids": []}
+        state = {"embed_batches": [], "embed_cached_ids": []}
         result = embed(state)
         assert result["embeddings"] == []
         assert result["embedding_ids"] == []
@@ -185,7 +185,7 @@ class TestEmbed:
             [{"chunk_id": "r0_chunk_0", "chunk_text": "a"}],
             [{"chunk_id": "r1_chunk_0", "chunk_text": "b"}],
         ]
-        state = {"_batches": batches, "_cached_ids": []}
+        state = {"embed_batches": batches, "embed_cached_ids": []}
 
         with patch("src.nodes.embed.time.sleep"):
             result = embed(state)
