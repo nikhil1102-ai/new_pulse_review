@@ -12,6 +12,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.config import (
     CLUSTER_SAMPLE_SIZE,
+    OPENAI_API_BASE,
     OPENAI_API_KEY,
     OPENAI_MODEL,
     OPENAI_TEMPERATURE,
@@ -102,12 +103,15 @@ def label_themes(state: PipelineState) -> dict:
     cleaned_reviews_lookup = {r["review_id"]: r for r in cleaned_reviews}
 
     # Initialise OpenAI LLM
-    llm = ChatOpenAI(
+    llm_kwargs = dict(
         model=OPENAI_MODEL,
         temperature=OPENAI_TEMPERATURE,
         api_key=OPENAI_API_KEY,
-        max_tokens=64,  # labels are short; save tokens
+        max_tokens=64,
     )
+    if OPENAI_API_BASE:
+        llm_kwargs["base_url"] = OPENAI_API_BASE
+    llm = ChatOpenAI(**llm_kwargs)
 
     labelled_clusters: list[dict] = []
 

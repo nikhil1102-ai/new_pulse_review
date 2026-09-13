@@ -19,6 +19,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.config import (
+    OPENAI_API_BASE,
     OPENAI_API_KEY,
     OPENAI_MODEL,
     OPENAI_TEMPERATURE,
@@ -108,12 +109,15 @@ def generate_fee_explainer(state: PipelineState) -> dict:
     # Append today's date hint for the LLM
     user_msg += f"\n\nToday's date for 'Last checked': {today}"
 
-    llm = ChatOpenAI(
+    llm_kwargs = dict(
         model=OPENAI_MODEL,
         temperature=OPENAI_TEMPERATURE,
         api_key=OPENAI_API_KEY,
         max_tokens=512,
     )
+    if OPENAI_API_BASE:
+        llm_kwargs["base_url"] = OPENAI_API_BASE
+    llm = ChatOpenAI(**llm_kwargs)
 
     logger.info("Generating Fee Explainer for: %s", fee_pain_point)
 

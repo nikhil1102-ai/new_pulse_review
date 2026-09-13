@@ -19,6 +19,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.config import (
     MAX_REPORT_WORDS,
+    OPENAI_API_BASE,
     OPENAI_API_KEY,
     OPENAI_MAX_TOKENS,
     OPENAI_MODEL,
@@ -158,12 +159,15 @@ def generate_report(state: PipelineState) -> dict:
     ]
 
     # ── Call OpenAI ───────────────────────────────────────────
-    llm = ChatOpenAI(
+    llm_kwargs = dict(
         model=OPENAI_MODEL,
         temperature=OPENAI_TEMPERATURE,
         api_key=OPENAI_API_KEY,
         max_tokens=OPENAI_MAX_TOKENS,
     )
+    if OPENAI_API_BASE:
+        llm_kwargs["base_url"] = OPENAI_API_BASE
+    llm = ChatOpenAI(**llm_kwargs)
 
     logger.info(
         "Generating ≤%d-word report for %s (%s to %s) — %d themes, %d reviews …",

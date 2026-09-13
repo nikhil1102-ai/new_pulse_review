@@ -73,15 +73,16 @@ HDBSCAN_RELAXED_MIN_CLUSTER_SIZE: int = int(
 )
 KMEANS_FALLBACK_K: int = int(os.getenv("KMEANS_FALLBACK_K", "5"))
 MIN_CLUSTERS: int = 3
-MAX_CLUSTERS: int = int(os.getenv("MAX_CLUSTERS", "5"))
+MAX_CLUSTERS: int = int(os.getenv("MAX_CLUSTERS", "10"))
 NOISE_THRESHOLD_PCT: float = 0.20
 CLUSTER_SAMPLE_SIZE: int = 20  # reviews sampled per cluster for labelling
 REPRESENTATIVE_QUOTES_COUNT: int = 3  # quotes per cluster
 
 # ──────────────────────────────────────────────
-# Phase 4 — Report Generation (OpenAI)
+# Phase 4 — Report Generation (OpenAI-compatible LLM)
 # ──────────────────────────────────────────────
-OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-oss-120b")
+OPENAI_API_BASE: str = os.getenv("OPENAI_API_BASE", "")
+OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_TEMPERATURE: float = float(os.getenv("OPENAI_TEMPERATURE", "0.3"))
 OPENAI_MAX_TOKENS: int = int(os.getenv("OPENAI_MAX_TOKENS", "2048"))
 MAX_REPORT_WORDS: int = int(os.getenv("MAX_REPORT_WORDS", "250"))
