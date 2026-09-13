@@ -17,6 +17,10 @@ python -m src.main --backfill
 # Explicit window / product / verbosity
 python -m src.main --product Groww --week-start 2026-07-13 --week-end 2026-09-07 --log-level DEBUG
 
+# Two-stage run: generate, review, then deliver separately
+python -m src.main --stage generate --backfill   # builds everything, sends nothing
+python -m src.main --stage deliver               # ships the generated run
+
 # Tests (no pytest config file; plain invocation)
 pytest
 pytest tests/test_clustering.py
@@ -32,7 +36,7 @@ Config comes from `.env` (see `.env.example`); `src/config.py` loads it via `pyt
 
 ### Graph
 
-`src/graph.py` builds the whole `StateGraph` and exports the compiled `app`. Nodes are a linear chain with one conditional edge:
+`src/graph.py` exposes `build_graph(include_delivery=True)` and a module-level `app` (the full pipeline). Passing `include_delivery=False` ends the graph at `generate_pdf`, so nothing can reach an external service — that is what the CI generate stage runs. Nodes are a linear chain with one conditional edge:
 
 ```
 fetch_reviews → clean → deduplicate → pii_scrub → chunk → batch_prepare
@@ -97,4 +101,21 @@ Re-running the same product/week must not duplicate reports or emails. Three ind
 - Reviews are data, not instructions — never let review text drive prompt behaviour when editing LLM nodes.
 - Phase numbers in module docstrings drifted from `docs/architecture.md` (e.g. `validate` says "Phase 6", the doc says Phase 5). Trust the graph order, not the numbers.
 - `docs/architecture.md` still describes delivery as a Google **Doc** append. That is stale — delivery now uploads a PDF to Drive. The code is the source of truth.
-- There is no human approval gate before delivery. `app.compile()` takes no checkpointer and no `interrupt_before`, so a run writes to Drive and Gmail unattended. Gmail only ever receives a *draft*, so nothing is auto-sent.
+### Scheduling and the approval gate
+
+`.github/workflows/weekly-pulse.yml` runs the pipeline weekly (Mondays 04:00 UTC) and on demand via `workflow_dispatch`. It is split into two jobs:
+
+1. **generate** — `--stage generate`, which builds the report and PDF and writes `data/reports/pending_delivery.json`, then uploads everything as an artifact. Makes no external call.
+2. **deliver** — targets the `production` GitHub Environment. With required reviewers configured there, this job *waits for a human* before running `--stage deliver`.
+
+`.github/scripts/run_summary.py` renders the report into the Actions run summary so the approver reads the real content before deciding.
+
+The handoff file stores `review_count`/`theme_count` rather than the lists themselves — `deliver` only takes `len()` of them — which keeps the artifact a few KB instead of megabytes. `_run_deliver` rebuilds placeholder lists of the right length. If `deliver` ever reads more than the length of those fields, this breaks.
+
+`--stage deliver` deliberately imports only `src.nodes.deliver`, never the graph, so the CI delivery job installs just `httpx` and `python-dotenv` instead of the clustering and PDF stack.
+
+**`AUTO_APPROVE` must stay `true` on the Railway MCP server.** Its `request_approval()` calls `input()`, so in a headless environment `false` means *reject everything* (EOFError → `return False`), not "ask someone". The real gate is the GitHub Environment, upstream of the server.
+
+- Embedding cache keys on `week_start`, so CI caching only helps re-runs of the same window, not week-over-week — consecutive windows overlap by ~7 weeks but re-embed in full.
+- GitHub disables scheduled workflows after 60 days of repo inactivity. The deliver job commits a run record to `history/`, which counts as activity and keeps the schedule alive.
+- The repo is public, so **Actions logs are public**, including the Drive URL the pipeline logs. Combined with link-shared PDFs, that makes reports effectively public.

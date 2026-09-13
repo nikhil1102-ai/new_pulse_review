@@ -1,0 +1,194 @@
+name: Weekly Review Pulse
+
+# Runs the pipeline on a schedule, then waits for a human to approve the
+# report before anything is sent to Google Drive or Gmail.
+#
+#   generate  -> builds the report and PDF, sends nothing
+#   (approval gate: GitHub Environment with required reviewers)
+#   deliver   -> uploads the PDF and creates the email draft
+#
+# Required repository secrets:
+#   OPENAI_API_KEY      Groq API key (OPENAI_API_BASE defaults to Groq)
+#   JINA_API_KEY        Jina embeddings key
+#   MCP_SERVER_URL      Railway FastAPI base URL, no trailing slash
+#   REPORT_RECIPIENTS   Comma-separated email recipients
+#
+# The approval gate needs a GitHub Environment named "production" with
+# required reviewers configured. Without that, delivery runs unattended.
+
+on:
+  schedule:
+    # Mondays 04:00 UTC (09:30 IST). GitHub may delay scheduled runs under
+    # load; for a weekly report that drift is harmless.
+    - cron: "0 4 * * MON"
+
+  workflow_dispatch:
+    inputs:
+      product:
+        description: "Product name"
+        required: false
+        default: "Groww"
+      week_start:
+        description: "Window start (YYYY-MM-DD). Blank = 8 weeks before end."
+        required: false
+        default: ""
+      week_end:
+        description: "Window end (YYYY-MM-DD). Blank = today."
+        required: false
+        default: ""
+
+# Never let two runs deliver at once; a queued run waits rather than racing.
+concurrency:
+  group: weekly-pulse
+  cancel-in-progress: false
+
+permissions:
+  contents: write # commit the run record back to the repo
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # 1. Generate — produces every artifact, sends nothing
+  # ────────────────────────────────────────────────────────────
+  generate:
+    name: Generate report
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    outputs:
+      product: ${{ steps.window.outputs.product }}
+      week_start: ${{ steps.window.outputs.week_start }}
+      week_end: ${{ steps.window.outputs.week_end }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Resolve the review window
+        id: window
+        run: |
+          PRODUCT="${{ github.event.inputs.product }}"
+          WEEK_END="${{ github.event.inputs.week_end }}"
+          WEEK_START="${{ github.event.inputs.week_start }}"
+
+          # Scheduled runs supply no inputs, so fall back to the 8-week default.
+          [ -z "$PRODUCT" ] && PRODUCT="Groww"
+          [ -z "$WEEK_END" ] && WEEK_END=$(date -u +%F)
+          [ -z "$WEEK_START" ] && WEEK_START=$(date -u -d "$WEEK_END - 8 weeks" +%F)
+
+          echo "product=$PRODUCT"       >> "$GITHUB_OUTPUT"
+          echo "week_start=$WEEK_START" >> "$GITHUB_OUTPUT"
+          echo "week_end=$WEEK_END"     >> "$GITHUB_OUTPUT"
+          echo "Window: $PRODUCT  $WEEK_START -> $WEEK_END"
+
+      # Embeddings are cached per review window, so this pays off when a run
+      # is retried or re-run for the same week. Consecutive weekly windows
+      # have different start dates and so do not share a cache entry.
+      - name: Restore embedding cache
+        uses: actions/cache@v4
+        with:
+          path: data/embeddings
+          key: embeddings-${{ steps.window.outputs.week_start }}
+          restore-keys: |
+            embeddings-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pipeline (no delivery)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
+        run: |
+          python -m src.main \
+            --stage generate \
+            --product "${{ steps.window.outputs.product }}" \
+            --week-start "${{ steps.window.outputs.week_start }}" \
+            --week-end "${{ steps.window.outputs.week_end }}"
+
+      # Put the report in front of the reviewer, so approving is an informed
+      # decision rather than a rubber stamp.
+      - name: Publish report to the run summary
+        if: always()
+        run: python .github/scripts/run_summary.py >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-${{ steps.window.outputs.week_start }}
+          path: |
+            data/reports/*.pdf
+            data/reports/*.md
+            data/reports/pending_delivery.json
+          retention-days: 90
+          if-no-files-found: error
+
+  # ────────────────────────────────────────────────────────────
+  # 2. Deliver — gated on approval, then ships
+  # ────────────────────────────────────────────────────────────
+  deliver:
+    name: Deliver (requires approval)
+    needs: generate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # THIS is the approval gate. Configure "production" under
+    # Settings -> Environments with required reviewers; the job then waits
+    # here until someone approves, and the run summary above is what they read.
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      # Delivery only needs the REST client, not the clustering or PDF stack.
+      - name: Install delivery dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx python-dotenv
+
+      - name: Download the approved artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pulse-${{ needs.generate.outputs.week_start }}
+          path: data/reports
+
+      - name: Deliver
+        env:
+          MCP_SERVER_URL: ${{ secrets.MCP_SERVER_URL }}
+          REPORT_RECIPIENTS: ${{ secrets.REPORT_RECIPIENTS }}
+        run: python -m src.main --stage deliver
+
+      # Committing the run record gives durable history beyond the 90-day
+      # artifact window, and counts as repo activity - GitHub disables
+      # scheduled workflows after 60 days of inactivity.
+      - name: Record the run in history
+        run: |
+          mkdir -p history
+          WEEK="${{ needs.generate.outputs.week_start }}"
+          AUDIT=$(ls data/reports/audit_*.json 2>/dev/null | head -1)
+
+          if [ -n "$AUDIT" ]; then
+            cp "$AUDIT" "history/run_${WEEK}.json"
+          else
+            echo "No audit record produced; skipping history entry."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add history/
+          git diff --staged --quiet || git commit -m "chore: record pulse run for ${WEEK}"
+          git push
