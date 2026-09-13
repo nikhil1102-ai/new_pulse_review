@@ -4,6 +4,10 @@ Pulse — the web UI for triggering, reviewing and approving review-pulse runs.
 A small FastAPI app over :mod:`src.web.runner`. The browser polls the JSON
 endpoints; there is no build step and no frontend framework.
 
+Every route except the health probe requires HTTP Basic credentials; see
+:mod:`src.web.auth`. Set PULSE_USERNAME and PULSE_PASSWORD before exposing
+this publicly.
+
 Endpoints:
     GET  /                       the single-page UI
     GET  /api/runs               run history
@@ -31,6 +35,7 @@ from pydantic import BaseModel
 
 from src.config import REVIEW_WINDOW_WEEKS
 from src.web import runner, store
+from src.web.auth import PROTECTED, auth_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +51,12 @@ async def _lifespan(_: FastAPI):
     )
     store.init_db()
     store.reset_stuck_runs()
+
+    if not auth_enabled():
+        logger.error(
+            "PULSE_PASSWORD is not set. Every protected route will return 503 "
+            "until it is configured."
+        )
     yield
 
 
@@ -54,6 +65,11 @@ app = FastAPI(
     description="Trigger, review and approve weekly review-pulse reports",
     version="1.0.0",
     lifespan=_lifespan,
+    # The interactive docs would sit outside the auth dependency, so they are
+    # disabled rather than left as an unauthenticated description of the API.
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 
@@ -107,7 +123,7 @@ def _require_run(run_id: str) -> dict:
 # ── UI ───────────────────────────────────────────────────────
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, dependencies=PROTECTED)
 def index() -> HTMLResponse:
     """Serve the single-page UI."""
     path = os.path.join(STATIC_DIR, "index.html")
@@ -120,16 +136,15 @@ def index() -> HTMLResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    """Liveness probe, also reporting whether the pipeline is busy."""
-    active = store.active_run()
-    return {
-        "status": "ok",
-        "busy": active is not None,
-        "active_run": active["id"] if active else None,
-    }
+    """Liveness probe.
+
+    Left unauthenticated so platform health checks can reach it, and therefore
+    reports nothing about runs beyond whether auth has been configured.
+    """
+    return {"status": "ok", "auth_configured": auth_enabled()}
 
 
-@app.get("/api/runs")
+@app.get("/api/runs", dependencies=PROTECTED)
 def list_runs(limit: int = 50) -> dict:
     """Run history, newest first, without the bulky report bodies."""
     runs = store.list_runs(limit=min(max(limit, 1), 200))
@@ -140,7 +155,7 @@ def list_runs(limit: int = 50) -> dict:
     return {"runs": runs}
 
 
-@app.post("/api/runs", status_code=202)
+@app.post("/api/runs", status_code=202, dependencies=PROTECTED)
 def trigger_run(req: TriggerRequest) -> dict:
     """Start a pipeline run in the background.
 
@@ -164,13 +179,13 @@ def trigger_run(req: TriggerRequest) -> dict:
     }
 
 
-@app.get("/api/runs/{run_id}")
+@app.get("/api/runs/{run_id}", dependencies=PROTECTED)
 def get_run(run_id: str) -> dict:
     """One run in full, including the report text for review."""
     return _require_run(run_id)
 
 
-@app.get("/api/runs/{run_id}/pdf")
+@app.get("/api/runs/{run_id}/pdf", dependencies=PROTECTED)
 def download_pdf(run_id: str) -> FileResponse:
     """Download the generated PDF so it can be checked before approving."""
     run = _require_run(run_id)
@@ -184,7 +199,7 @@ def download_pdf(run_id: str) -> FileResponse:
     )
 
 
-@app.post("/api/runs/{run_id}/approve")
+@app.post("/api/runs/{run_id}/approve", dependencies=PROTECTED)
 def approve_run(run_id: str) -> dict:
     """Approve a reviewed run: upload the PDF and draft the email.
 
@@ -201,7 +216,7 @@ def approve_run(run_id: str) -> dict:
     return {"run_id": run_id, "status": store.DELIVERING}
 
 
-@app.post("/api/runs/{run_id}/reject")
+@app.post("/api/runs/{run_id}/reject", dependencies=PROTECTED)
 def reject_run(run_id: str) -> dict:
     """Reject a reviewed run. Nothing is sent, and it cannot be approved later."""
     try:

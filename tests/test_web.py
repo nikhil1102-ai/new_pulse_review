@@ -32,9 +32,30 @@ def db(tmp_path, monkeypatch):
     return path
 
 
+TEST_USER = "tester"
+TEST_PASSWORD = "s3cret-pw"
+
+
 @pytest.fixture
-def client(db):
-    """A test client whose startup hook reuses the temporary database."""
+def auth_env(monkeypatch):
+    """Configure Basic auth credentials for the app under test."""
+    monkeypatch.setenv("PULSE_USERNAME", TEST_USER)
+    monkeypatch.setenv("PULSE_PASSWORD", TEST_PASSWORD)
+
+
+@pytest.fixture
+def client(db, auth_env):
+    """An authenticated test client using the temporary database."""
+    from src.web.app import app
+
+    with TestClient(app) as c:
+        c.auth = (TEST_USER, TEST_PASSWORD)
+        yield c
+
+
+@pytest.fixture
+def anon_client(db, auth_env):
+    """A client that sends no credentials."""
     from src.web.app import app
 
     with TestClient(app) as c:
@@ -239,9 +260,15 @@ class TestRunner:
 
 
 class TestApi:
-    def test_health(self, client):
-        body = client.get("/api/health").json()
-        assert body["status"] == "ok" and body["busy"] is False
+    def test_health_is_public(self, anon_client):
+        """Platform probes must reach health without credentials."""
+        res = anon_client.get("/api/health")
+        assert res.status_code == 200
+        assert res.json()["status"] == "ok"
+
+    def test_health_leaks_no_run_details(self, anon_client):
+        body = anon_client.get("/api/health").json()
+        assert "active_run" not in body and "busy" not in body
 
     def test_index_serves_the_ui(self, client):
         res = client.get("/")
@@ -334,3 +361,65 @@ class TestApi:
             with patch("src.web.runner._spawn"):
                 client.post("/api/runs", json={})
         mock_deliver.assert_not_called()
+
+
+# ──────────────────────────────────────────────────────────────
+# Authentication
+# ──────────────────────────────────────────────────────────────
+
+
+class TestAuth:
+    @pytest.mark.parametrize("method,path", [
+        ("get", "/"),
+        ("get", "/api/runs"),
+        ("post", "/api/runs"),
+        ("get", "/api/runs/abc"),
+        ("get", "/api/runs/abc/pdf"),
+        ("post", "/api/runs/abc/approve"),
+        ("post", "/api/runs/abc/reject"),
+    ])
+    def test_every_route_requires_credentials(self, anon_client, method, path):
+        res = getattr(anon_client, method)(path)
+        assert res.status_code == 401, f"{method.upper()} {path} was reachable"
+
+    def test_challenge_header_prompts_the_browser(self, anon_client):
+        res = anon_client.get("/")
+        assert "basic" in res.headers.get("www-authenticate", "").lower()
+
+    def test_wrong_password_is_rejected(self, anon_client):
+        res = anon_client.get("/api/runs", auth=(TEST_USER, "wrong"))
+        assert res.status_code == 401
+
+    def test_wrong_username_is_rejected(self, anon_client):
+        res = anon_client.get("/api/runs", auth=("intruder", TEST_PASSWORD))
+        assert res.status_code == 401
+
+    def test_correct_credentials_are_accepted(self, anon_client):
+        res = anon_client.get("/api/runs", auth=(TEST_USER, TEST_PASSWORD))
+        assert res.status_code == 200
+
+    def test_unconfigured_password_fails_closed(self, db, monkeypatch):
+        """With no password set, Pulse must refuse rather than serve openly."""
+        monkeypatch.delenv("PULSE_PASSWORD", raising=False)
+        from src.web.app import app
+
+        with TestClient(app) as c:
+            # Even correct-looking credentials cannot get in.
+            res = c.get("/api/runs", auth=("admin", "anything"))
+            assert res.status_code == 503
+            assert "PULSE_PASSWORD" in res.json()["detail"]
+
+    def test_approve_cannot_be_reached_anonymously(self, anon_client, db):
+        """The delivery trigger is the most sensitive route."""
+        run_id = _finished_run()
+        with patch("src.web.runner._spawn") as spawned:
+            res = anon_client.post(f"/api/runs/{run_id}/approve")
+
+        assert res.status_code == 401
+        spawned.assert_not_called()
+        assert store.get_run(run_id)["status"] == store.AWAITING_APPROVAL
+
+    def test_interactive_docs_are_disabled(self, anon_client):
+        """Docs would otherwise describe the API without authentication."""
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            assert anon_client.get(path).status_code == 404

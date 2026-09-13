@@ -108,6 +108,7 @@ Re-running the same product/week must not duplicate reports or emails. Three ind
 - `store.py` — SQLite run history. The generated report is stored **in the row**, not left on disk, so an approval survives a restart. Only the PDF stays on the filesystem, which is why `REPORTS_DIR` needs a persistent volume.
 - `runner.py` — background threads. `_run_pipeline` calls `build_graph(include_delivery=False)` and streams node updates into the run's `step` field for the progress line. `_run_delivery` calls the `deliver` node directly.
 - `app.py` — JSON API plus the single page at `/`.
+- `auth.py` — HTTP Basic on every route except `/api/health`. It **fails closed**: with `PULSE_PASSWORD` unset, protected routes return 503 rather than serving openly, since a public deployment silently allowing anyone in is far worse than refusing. Credentials compare via `secrets.compare_digest`, and FastAPI's `/docs`, `/redoc` and `/openapi.json` are disabled so they cannot describe the API unauthenticated.
 - `static/index.html` — vanilla JS, no build step. Polls every 2.5s while a run is live, 15s otherwise.
 
 Lifecycle: `queued → running → awaiting_approval → delivering → delivered`, with `rejected` and `failed` as the other terminals. Only `queued`/`running`/`delivering` count as active, so a run parked at `awaiting_approval` does not block the next trigger. `reset_stuck_runs()` fails interrupted runs on startup but deliberately spares ones awaiting approval — their results are in the database and still deliverable.
