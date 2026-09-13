@@ -1,134 +1,170 @@
 """
-MCP client utility for communicating with the Railway-deployed MCP server.
+REST client utility for communicating with the Railway-deployed FastAPI server.
 
-Provides async helper functions to connect via SSE and invoke MCP tools
-(``create_google_doc``, ``send_email``) on the remote server.
+Provides synchronous helper functions to call the server's REST endpoints:
+- ``POST /append_to_doc``      — append report content to a Google Doc
+- ``POST /create_email_draft`` — create a Gmail draft (or send directly)
 
-The MCP server has OAuth credentials and token configuration embedded,
-so the client only needs the server URL to connect.
+The FastAPI server has OAuth credentials and token configuration embedded,
+so the client only needs the server URL (``MCP_SERVER_URL``) to connect.
+No SSE or MCP protocol overhead — plain JSON over HTTPS.
 """
 
-import asyncio
-import json
 import logging
-from contextlib import asynccontextmanager
 
-from mcp import ClientSession
-from mcp.client.sse import sse_client
+import httpx
 
 from src.config import MCP_SERVER_URL, MCP_SERVER_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 
-# ── Session management ───────────────────────────────────────
+# ── Internal helpers ─────────────────────────────────────────
 
 
-@asynccontextmanager
-async def get_mcp_session():
-    """Create an MCP client session connected to the Railway server via SSE.
+def _post(endpoint: str, payload: dict) -> dict:
+    """Send a JSON POST request to *endpoint* on the configured server.
 
-    Usage::
+    Args:
+        endpoint: Path relative to ``MCP_SERVER_URL``, e.g. ``/append_to_doc``.
+        payload:  JSON-serialisable request body.
 
-        async with get_mcp_session() as session:
-            result = await session.call_tool("send_email", {...})
+    Returns:
+        A dict with ``success`` (bool) and ``data`` (response JSON or None).
+
+    Raises:
+        RuntimeError: If ``MCP_SERVER_URL`` is not configured.
+        httpx.HTTPStatusError: On 4xx / 5xx responses (after logging).
+        httpx.RequestError: On network-level failures (after logging).
     """
     if not MCP_SERVER_URL:
         raise RuntimeError(
             "MCP_SERVER_URL is not configured. "
-            "Set it in .env to point at your Railway MCP server."
+            "Set it in .env to point at your Railway FastAPI server."
         )
 
-    logger.info("Connecting to MCP server at %s", MCP_SERVER_URL)
+    base = MCP_SERVER_URL.rstrip("/")
+    url = f"{base}{endpoint}"
 
-    # MCP SSE servers expose the endpoint at /sse
-    url = MCP_SERVER_URL.rstrip("/")
-    if not url.endswith("/sse"):
-        url = url + "/sse"
-        logger.info("Auto-appended /sse → %s", url)
+    logger.info("POST %s — payload keys: %s", url, list(payload.keys()))
 
-    async with sse_client(url=url) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            logger.info("MCP session initialised successfully.")
-            yield session
+    try:
+        response = httpx.post(
+            url,
+            json=payload,
+            timeout=MCP_SERVER_TIMEOUT,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "Server returned HTTP %s for %s: %s",
+            exc.response.status_code,
+            url,
+            exc.response.text[:200],
+        )
+        raise
+    except httpx.RequestError as exc:
+        logger.error("Network error calling %s: %s", url, exc)
+        raise
+
+    try:
+        data = response.json()
+    except Exception:
+        # Non-JSON success body (e.g. plain 200 OK with empty body)
+        data = response.text or None
+
+    logger.info("POST %s → HTTP 2xx, data: %s", url, str(data)[:120])
+    return {"success": True, "data": data}
 
 
-# ── Tool invocation ──────────────────────────────────────────
+# ── Public API ───────────────────────────────────────────────
 
 
-async def _call_tool_async(tool_name: str, arguments: dict) -> dict:
-    """Call a named tool on the MCP server and return parsed result.
+def append_to_doc(title: str, content: str) -> dict:
+    """Append *content* to a Google Doc (created if it doesn't exist).
 
-    Returns a dict with ``success`` (bool) and ``data`` (parsed JSON or
-    raw text from the first text content block).
+    Calls ``POST /append_to_doc`` on the Railway FastAPI server.
+
+    Args:
+        title:   Document title (used to look up or create the Doc).
+        content: Markdown/plain-text body to append.
+
+    Returns:
+        ``{"success": True, "data": {...}}`` where ``data`` typically
+        contains ``doc_url`` and ``document_id``.
+
+    Example::
+
+        result = append_to_doc(
+            title="Groww — Weekly Pulse — 2026-09-01",
+            content="## Summary\\n...",
+        )
+        doc_url = result["data"]["doc_url"]
     """
-    async with get_mcp_session() as session:
-        logger.info("Calling MCP tool '%s' with args: %s", tool_name, arguments)
-        result = await session.call_tool(tool_name, arguments=arguments)
+    return _post("/append_to_doc", {"title": title, "content": content})
 
-        if result.content:
-            for block in result.content:
-                if hasattr(block, "text"):
-                    # Try to parse as JSON; fall back to raw text
-                    try:
-                        parsed = json.loads(block.text)
-                        return {"success": True, "data": parsed}
-                    except (json.JSONDecodeError, TypeError):
-                        return {"success": True, "data": block.text}
 
-        return {"success": True, "data": None}
+def create_email_draft(to: list[str], subject: str, body: str) -> dict:
+    """Create a Gmail draft (or send immediately, depending on server config).
+
+    Calls ``POST /create_email_draft`` on the Railway FastAPI server.
+
+    Args:
+        to:      List of recipient email addresses.
+        subject: Email subject line.
+        body:    Plain-text or Markdown email body.
+
+    Returns:
+        ``{"success": True, "data": {...}}`` where ``data`` typically
+        contains ``draft_id`` or ``message_id``.
+
+    Example::
+
+        result = create_email_draft(
+            to=["team@example.com"],
+            subject="Weekly Pulse",
+            body="## Summary\\n...",
+        )
+    """
+    return _post("/create_email_draft", {"to": to, "subject": subject, "body": body})
+
+
+# ── Legacy shim (kept for backward-compat during transition) ─
 
 
 def call_mcp_tool(tool_name: str, arguments: dict) -> dict:
-    """Synchronous wrapper around :func:`_call_tool_async`.
+    """**Deprecated shim** — routes legacy MCP tool calls to REST endpoints.
 
-    Safe to call from synchronous LangGraph node functions.  Creates a
-    new event loop if one is not already running.
+    Supported mappings:
+
+    - ``create_google_doc``  → :func:`append_to_doc`
+    - ``send_email``         → :func:`create_email_draft`
+
+    Raises:
+        ValueError: For unknown tool names.
     """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
+    logger.warning(
+        "call_mcp_tool('%s') is deprecated — use append_to_doc() or "
+        "create_email_draft() directly.",
+        tool_name,
+    )
 
-    if loop and loop.is_running():
-        # We're inside an existing async context (e.g. Jupyter, some
-        # LangGraph runtimes).  Use nest_asyncio or a thread.
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, _call_tool_async(tool_name, arguments)).result(
-                timeout=MCP_SERVER_TIMEOUT
-            )
+    if tool_name == "create_google_doc":
+        return append_to_doc(
+            title=arguments.get("title", "Untitled"),
+            content=arguments.get("content", ""),
+        )
+    elif tool_name == "send_email":
+        recipients = arguments.get("to", [])
+        if isinstance(recipients, str):
+            recipients = [recipients]
+        return create_email_draft(
+            to=recipients,
+            subject=arguments.get("subject", ""),
+            body=arguments.get("body", ""),
+        )
     else:
-        return asyncio.run(_call_tool_async(tool_name, arguments))
-
-
-# ── Discovery ────────────────────────────────────────────────
-
-
-async def _list_tools_async() -> list[dict]:
-    """List all tools available on the MCP server."""
-    async with get_mcp_session() as session:
-        tools_response = await session.list_tools()
-        return [
-            {
-                "name": t.name,
-                "description": t.description,
-                "input_schema": t.inputSchema if hasattr(t, "inputSchema") else None,
-            }
-            for t in tools_response.tools
-        ]
-
-
-def list_mcp_tools() -> list[dict]:
-    """Synchronous wrapper to list all tools on the MCP server.
-
-    Useful for debugging and verifying the server is reachable::
-
-        from src.mcp_client import list_mcp_tools
-        tools = list_mcp_tools()
-        for t in tools:
-            print(f"  {t['name']}: {t['description']}")
-    """
-    return asyncio.run(_list_tools_async())
+        raise ValueError(
+            f"Unknown tool '{tool_name}'. "
+            "Use append_to_doc() or create_email_draft() directly."
+        )

@@ -1,16 +1,16 @@
 """
-Phase 7 — Deliver report via MCP server (Google Docs & Gmail) and write audit log.
+Phase 7 — Deliver report via REST server (Google Docs & Gmail) and write audit log.
 
 Channels:
-1. **Google Docs** — create a Doc with the report content via ``create_google_doc``
-   MCP tool on the Railway-deployed MCP server
-2. **Gmail** — send a summary email via ``send_email`` MCP tool on the same server
+1. **Google Docs** — append the report to a Google Doc via ``POST /append_to_doc``
+   on the Railway-deployed FastAPI server
+2. **Gmail** — create an email draft via ``POST /create_email_draft`` on the same server
 3. **Audit log** — persist a JSON record of the run to ``data/reports/``
 
-The MCP server has OAuth credentials and token configuration embedded, so
-delivery requires only the ``MCP_SERVER_URL`` environment variable.
+The FastAPI server has OAuth credentials and token configuration embedded, so
+delivery requires only the ``MCP_SERVER_URL`` environment variable (no /sse suffix).
 
-All delivery channels are skipped gracefully if the MCP server URL is not
+All delivery channels are skipped gracefully if the server URL is not
 configured, falling back to local-only report persistence + audit log.
 """
 
@@ -25,7 +25,7 @@ from src.config import (
     REPORT_RECIPIENTS,
     REPORTS_DIR,
 )
-from src.mcp_client import call_mcp_tool
+from src.mcp_client import append_to_doc, create_email_draft
 from src.state import PipelineState
 
 logger = logging.getLogger(__name__)
@@ -79,12 +79,12 @@ def _save_report_locally(
 # ── MCP-based delivery ──────────────────────────────────────
 
 
-def _create_google_doc_via_mcp(
+def _create_google_doc_via_rest(
     report_markdown: str, product: str, week_start: str
 ) -> str | None:
-    """Create a Google Doc via the ``create_google_doc`` MCP tool.
+    """Append the report to a Google Doc via ``POST /append_to_doc``.
 
-    Returns the Doc URL on success, or None if the MCP server is unavailable.
+    Returns the Doc URL on success, or None if the server is unavailable.
     """
     if not MCP_SERVER_URL:
         logger.warning(
@@ -94,10 +94,7 @@ def _create_google_doc_via_mcp(
 
     try:
         title = f"{product} — Weekly Pulse — {week_start}"
-        result = call_mcp_tool("create_google_doc", {
-            "title": title,
-            "content": report_markdown,
-        })
+        result = append_to_doc(title=title, content=report_markdown)
 
         if result.get("success"):
             data = result.get("data")
@@ -105,37 +102,37 @@ def _create_google_doc_via_mcp(
             if isinstance(data, dict):
                 doc_url = data.get("doc_url") or data.get("url") or data.get("documentUrl")
             elif isinstance(data, str):
-                # The MCP server may return just the URL as a string
+                # Server may return just the URL as a string
                 doc_url = data if data.startswith("http") else None
             else:
                 doc_url = None
 
             if doc_url:
-                logger.info("Google Doc created via MCP: %s", doc_url)
+                logger.info("Google Doc created via REST: %s", doc_url)
                 return doc_url
             else:
                 logger.warning(
-                    "MCP create_google_doc returned success but no URL. "
+                    "POST /append_to_doc returned success but no URL. "
                     "Response data: %s",
                     data,
                 )
                 return None
 
-        logger.error("MCP create_google_doc failed: %s", result)
+        logger.error("POST /append_to_doc failed: %s", result)
         return None
 
     except Exception as exc:
-        logger.error("MCP Google Doc creation failed: %s", exc)
+        logger.error("REST Google Doc creation failed: %s", exc)
         return None
 
 
-def _send_email_via_mcp(
+def _send_email_via_rest(
     report_markdown: str,
     product: str,
     week_start: str,
     doc_url: str | None,
 ) -> bool:
-    """Send the report via the ``send_email`` MCP tool.
+    """Create an email draft via ``POST /create_email_draft``.
 
     Returns True on success, False otherwise.
     """
@@ -156,23 +153,23 @@ def _send_email_via_mcp(
         if doc_url:
             body += f"\n\n---\nFull report: {doc_url}\n"
 
-        result = call_mcp_tool("send_email", {
-            "to": REPORT_RECIPIENTS,
-            "subject": subject,
-            "body": body,
-        })
+        result = create_email_draft(
+            to=REPORT_RECIPIENTS,
+            subject=subject,
+            body=body,
+        )
 
         if result.get("success"):
             logger.info(
-                "Email sent via MCP to: %s", ", ".join(REPORT_RECIPIENTS)
+                "Email draft created via REST for: %s", ", ".join(REPORT_RECIPIENTS)
             )
             return True
 
-        logger.error("MCP send_email failed: %s", result)
+        logger.error("POST /create_email_draft failed: %s", result)
         return False
 
     except Exception as exc:
-        logger.error("MCP email delivery failed: %s", exc)
+        logger.error("REST email delivery failed: %s", exc)
         return False
 
 
@@ -182,10 +179,10 @@ def _send_email_via_mcp(
 def deliver(state: PipelineState) -> dict:
     """LangGraph node: deliver the validated report and write audit log.
 
-    **Delivery channels** (via Railway-deployed MCP server):
+    **Delivery channels** (via Railway-deployed FastAPI server — plain REST):
 
-    1. Google Docs — ``create_google_doc`` MCP tool
-    2. Gmail — ``send_email`` MCP tool
+    1. Google Docs — ``POST /append_to_doc``
+    2. Gmail — ``POST /create_email_draft``
     3. Local file + audit log — always written
 
     **Input** (from state):
@@ -244,11 +241,11 @@ def deliver(state: PipelineState) -> dict:
     # ── Save report locally (always) ─────────────────────────
     report_path = _save_report_locally(full_content, product, week_start)
 
-    # ── Google Docs (via MCP) ────────────────────────────────
-    doc_url = _create_google_doc_via_mcp(full_content, product, week_start)
+    # ── Google Docs (via REST /append_to_doc) ───────────────
+    doc_url = _create_google_doc_via_rest(full_content, product, week_start)
 
-    # ── Gmail (via MCP) ──────────────────────────────────────
-    email_sent = _send_email_via_mcp(
+    # ── Gmail (via REST /create_email_draft) ─────────────────
+    email_sent = _send_email_via_rest(
         full_content, product, week_start, doc_url
     )
 
@@ -267,8 +264,8 @@ def deliver(state: PipelineState) -> dict:
         "validation_errors": validation_errors,
         "fee_pain_point": fee_pain_point,
         "has_fee_explainer": bool(fee_explainer),
-        "delivery_method": "mcp_server",
-        "mcp_server_url": MCP_SERVER_URL or "(not configured)",
+        "delivery_method": "rest_api",
+        "server_url": MCP_SERVER_URL or "(not configured)",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

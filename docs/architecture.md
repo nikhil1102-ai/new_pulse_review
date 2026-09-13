@@ -321,24 +321,24 @@ Using the confusion identified in Phase 3b, generate a structured explanation:
 
 ---
 
-## Phase 6 — Delivery (via MCP Server)
+## Phase 6 — Delivery (via REST API)
 
-The delivery phase uses a **custom MCP server deployed on Railway** to handle Google Docs and Gmail operations. The MCP server has OAuth credentials and token configuration embedded, so the pipeline only needs the server URL to connect. Communication uses the **SSE (Server-Sent Events)** transport protocol.
+The delivery phase uses a **custom FastAPI server deployed on Railway** to handle Google Docs and Gmail operations. The server has OAuth credentials and token configuration embedded, so the pipeline only needs the base server URL to connect. Communication uses plain **HTTP POST** (JSON over HTTPS) — no SSE or MCP protocol overhead.
 
 ```mermaid
 flowchart LR
-    D1["Validated report\n(Markdown)"] --> D2["MCP Server\n(Railway — SSE)"]
-    D2 --> D3["Google Docs\n(create / update)"]
-    D2 --> D4["Gmail\n(send summary email)"]
+    D1["Validated report\n(Markdown)"] --> D2["FastAPI Server\n(Railway — REST)"]
+    D2 --> D3["Google Docs\n(append / create)"]
+    D2 --> D4["Gmail\n(create draft)"]
     D3 --> D5["Audit log\n(run record)"]
     D4 --> D5
 ```
 
 | Channel | Detail |
 |---|---|
-| **Google Docs** | Create a new Google Doc titled `Groww — Weekly Pulse — {week}` via the `create_google_doc` MCP tool on the Railway server (OAuth embedded in server) |
-| **Gmail** | Send a summary email to configured recipients via the `send_email` MCP tool on the Railway server (OAuth embedded in server) |
-| **MCP Transport** | SSE (Server-Sent Events) over HTTPS — the pipeline connects to `MCP_SERVER_URL` |
+| **Google Docs** | Append report content to a Google Doc titled `Groww — Weekly Pulse — {week}` via `POST /append_to_doc` (OAuth embedded in server) |
+| **Gmail** | Create an email draft for configured recipients via `POST /create_email_draft` (OAuth embedded in server) |
+| **Transport** | Plain HTTPS JSON — `MCP_SERVER_URL` is the base URL (no `/sse` suffix) |
 | **Duplicate prevention** | Before creating a Doc or sending an email, query the audit log for an existing run with the same `(product, week)` key |
 
 ---
@@ -472,7 +472,7 @@ graph.add_conditional_edges("validate", should_retry_report)
 | **Clustering** | UMAP + HDBSCAN (fallback: K-Means) |
 | **Quote validation** | `rapidfuzz` (fuzzy string matching) |
 | **Vector cache** | NumPy `.npy` / ChromaDB |
-| **Delivery** | MCP Server (Railway, SSE transport) → Google Docs + Gmail |
+| **Delivery** | FastAPI server (Railway, REST/HTTPS) — `POST /append_to_doc`, `POST /create_email_draft` → Google Docs + Gmail |
 | **Language** | Python 3.11+ |
 | **Scheduling** | Cron / Cloud Scheduler / APScheduler |
 
@@ -502,7 +502,7 @@ Reviews_Based_agent/
 │   │   ├── generate_report.py   # Phase 4 — Report Generation
 │   │   ├── validate.py          # Phase 5 — Validation
 │   │   └── deliver.py           # Phase 6 — Delivery (via MCP)
-│   ├── mcp_client.py            # MCP client utility (SSE → Railway server)
+│   ├── mcp_client.py            # REST client (httpx → Railway FastAPI server)
 │   ├── state.py                 # PipelineState TypedDict
 │   └── config.py                # API keys, constants
 ├── data/

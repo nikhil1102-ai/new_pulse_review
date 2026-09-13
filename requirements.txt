@@ -23,8 +23,8 @@ scikit-learn>=1.3.0
 # Validation
 rapidfuzz>=3.5.0
 
-# Delivery (MCP server on Railway — handles Google Docs + Gmail)
-mcp[cli]>=1.0.0
+# Delivery (REST calls to Railway FastAPI server — Google Docs + Gmail)
+httpx>=0.27.0
 
 # Deduplication
 datasketch>=1.6.0

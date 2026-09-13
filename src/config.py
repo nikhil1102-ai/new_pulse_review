@@ -27,8 +27,10 @@ GOOGLE_PLAY_COUNTRY: str = os.getenv("GOOGLE_PLAY_COUNTRY", "in")
 GOOGLE_PLAY_LANGUAGE: str = os.getenv("GOOGLE_PLAY_LANGUAGE", "en")
 
 # ──────────────────────────────────────────────
-# MCP Server (Google Docs & Gmail delivery via Railway)
+# REST Server (Google Docs & Gmail delivery via Railway FastAPI)
 # ──────────────────────────────────────────────
+# Base URL of the Railway FastAPI server — no /sse suffix required.
+# Endpoints used: POST /append_to_doc, POST /create_email_draft
 MCP_SERVER_URL: str = os.getenv("MCP_SERVER_URL", "")
 MCP_SERVER_TIMEOUT: int = int(os.getenv("MCP_SERVER_TIMEOUT", "60"))
 REPORT_RECIPIENTS: list[str] = [
