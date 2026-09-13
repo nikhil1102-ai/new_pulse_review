@@ -78,6 +78,13 @@ def embed(state: PipelineState) -> dict:
     batches = state.get("embed_batches", [])
     cached_ids = set(state.get("embed_cached_ids", []))
 
+    # Debug: log what the node received from state
+    logger.info(
+        "Embed node received state keys: %s | embed_batches length: %d",
+        [k for k in state.keys()],
+        len(batches),
+    )
+
     all_embeddings: list[list[float]] = []
     all_ids: list[str] = []
 

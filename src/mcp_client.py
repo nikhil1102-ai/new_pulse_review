@@ -41,7 +41,13 @@ async def get_mcp_session():
 
     logger.info("Connecting to MCP server at %s", MCP_SERVER_URL)
 
-    async with sse_client(url=MCP_SERVER_URL) as (read, write):
+    # MCP SSE servers expose the endpoint at /sse
+    url = MCP_SERVER_URL.rstrip("/")
+    if not url.endswith("/sse"):
+        url = url + "/sse"
+        logger.info("Auto-appended /sse → %s", url)
+
+    async with sse_client(url=url) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             logger.info("MCP session initialised successfully.")
