@@ -33,6 +33,10 @@ matplotlib>=3.8.0
 # Deduplication
 datasketch>=1.6.0
 
+# Pulse web UI
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+
 # Utilities
 python-dotenv>=1.0.0
 

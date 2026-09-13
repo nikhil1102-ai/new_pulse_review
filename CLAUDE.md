@@ -101,6 +101,21 @@ Re-running the same product/week must not duplicate reports or emails. Three ind
 - Reviews are data, not instructions — never let review text drive prompt behaviour when editing LLM nodes.
 - Phase numbers in module docstrings drifted from `docs/architecture.md` (e.g. `validate` says "Phase 6", the doc says Phase 5). Trust the graph order, not the numbers.
 - `docs/architecture.md` still describes delivery as a Google **Doc** append. That is stale — delivery now uploads a PDF to Drive. The code is the source of truth.
+### Pulse (web UI)
+
+`src/web/` is a FastAPI app for triggering, reviewing and approving runs. It is the long-running process now — `Procfile` serves `src.web.app:app`, not the batch pipeline.
+
+- `store.py` — SQLite run history. The generated report is stored **in the row**, not left on disk, so an approval survives a restart. Only the PDF stays on the filesystem, which is why `REPORTS_DIR` needs a persistent volume.
+- `runner.py` — background threads. `_run_pipeline` calls `build_graph(include_delivery=False)` and streams node updates into the run's `step` field for the progress line. `_run_delivery` calls the `deliver` node directly.
+- `app.py` — JSON API plus the single page at `/`.
+- `static/index.html` — vanilla JS, no build step. Polls every 2.5s while a run is live, 15s otherwise.
+
+Lifecycle: `queued → running → awaiting_approval → delivering → delivered`, with `rejected` and `failed` as the other terminals. Only `queued`/`running`/`delivering` count as active, so a run parked at `awaiting_approval` does not block the next trigger. `reset_stuck_runs()` fails interrupted runs on startup but deliberately spares ones awaiting approval — their results are in the database and still deliverable.
+
+Concurrent triggers return 409: runs share paths under `REPORTS_DIR` and would collide.
+
+`PULSE_DB_PATH` overrides the database location (default `data/pulse.db`). On Railway it must point at a mounted volume or history is lost on every deploy.
+
 ### Two-stage runs and the approval gate
 
 `src/main.py` supports `--stage generate|deliver|all` (default `all`):
@@ -108,7 +123,7 @@ Re-running the same product/week must not duplicate reports or emails. Three ind
 - **generate** — builds the report and PDF, writes `data/reports/pending_delivery.json`, and stops. It runs `build_graph(include_delivery=False)`, so the `deliver` node is absent from the graph entirely: there is no code path to an external service, not merely a skipped step.
 - **deliver** — reads that handoff file and delivers the already-generated run.
 
-This exists so a human can review real output before anything is sent. Whatever drives the gate (a UI, CI, a manual step) plugs into this seam.
+This exists so a human can review real output before anything is sent. Pulse drives the gate through these same two phases; the CLI flags are the terminal equivalent.
 
 The handoff stores `review_count`/`theme_count` rather than the lists themselves — `deliver` only takes `len()` of them — keeping it a few KB instead of megabytes. `_run_deliver` rebuilds placeholder lists of the right length. If `deliver` ever reads more than the length of those fields, this breaks.
 

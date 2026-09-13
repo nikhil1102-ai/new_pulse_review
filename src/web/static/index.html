@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulse</title>
+<style>
+  :root {
+    --ink: #1a1a2e;
+    --muted: #6b6b80;
+    --line: #e4e4ec;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --accent: #1a73e8;
+    --good: #1e7a37;
+    --good-bg: #e8f5ec;
+    --warn: #a35a00;
+    --warn-bg: #fdf2e2;
+    --bad: #b3261e;
+    --bad-bg: #fce9e7;
+    --info-bg: #e8f0fe;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.55;
+  }
+  header {
+    background: var(--ink);
+    color: #fff;
+    padding: 20px 16px;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: -0.2px; }
+  header p { margin: 4px 0 0; opacity: 0.7; font-size: 13px; }
+  main { padding: 20px 16px 60px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  h2 { font-size: 15px; margin: 0 0 12px; text-transform: uppercase;
+       letter-spacing: 0.5px; color: var(--muted); }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .field { flex: 1 1 160px; }
+  input {
+    width: 100%; padding: 9px 11px; font: inherit; font-size: 14px;
+    border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink);
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    font: inherit; font-size: 14px; font-weight: 600; padding: 10px 18px;
+    border: 0; border-radius: 7px; cursor: pointer; background: var(--accent); color: #fff;
+  }
+  button:hover:not(:disabled) { filter: brightness(0.93); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+  button.approve { background: var(--good); }
+  button.reject { background: #fff; color: var(--bad); border: 1px solid var(--bad); }
+  .pill {
+    display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 9px;
+    border-radius: 20px; text-transform: uppercase; letter-spacing: 0.4px;
+  }
+  .s-queued, .s-running, .s-delivering { background: var(--info-bg); color: var(--accent); }
+  .s-awaiting_approval { background: var(--warn-bg); color: var(--warn); }
+  .s-delivered { background: var(--good-bg); color: var(--good); }
+  .s-failed, .s-rejected { background: var(--bad-bg); color: var(--bad); }
+  .metrics { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
+  .metric {
+    flex: 1 1 110px; background: var(--bg); border-radius: 8px;
+    padding: 10px 12px; text-align: center;
+  }
+  .metric b { display: block; font-size: 19px; }
+  .metric span { font-size: 11px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; font-size: 11px; text-transform: uppercase;
+    color: var(--muted); border-bottom: 1px solid var(--line); padding: 8px 6px;
+  }
+  td { padding: 9px 6px; border-bottom: 1px solid var(--line); }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: var(--bg); }
+  .report {
+    background: var(--bg); border-radius: 8px; padding: 14px 18px;
+    max-height: 380px; overflow-y: auto; font-size: 14px;
+  }
+  .report h2 { font-size: 14px; text-transform: none; letter-spacing: 0;
+               color: var(--ink); margin: 14px 0 6px; }
+  .report blockquote {
+    margin: 8px 0; padding: 6px 14px; border-left: 3px solid var(--accent);
+    background: #fff; font-style: italic; color: #44445a;
+  }
+  .theme {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px;
+  }
+  .theme:last-child { border-bottom: 0; }
+  .theme small { color: var(--muted); white-space: nowrap; }
+  .banner { padding: 11px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); }
+  .banner.bad { background: var(--bad-bg); color: var(--bad); }
+  .banner.good { background: var(--good-bg); color: var(--good); }
+  .muted { color: var(--muted); font-size: 13px; }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+  .spin {
+    display: inline-block; width: 12px; height: 12px; margin-right: 7px;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hide { display: none; }
+  .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  a { color: var(--accent); }
+  @media (max-width: 560px) { .hide-sm { display: none; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>Pulse</h1>
+    <p>Generate the weekly review report, check it, then send it.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- Trigger -->
+  <section class="card">
+    <h2>New run</h2>
+    <div class="row">
+      <div class="field">
+        <label for="product">Product</label>
+        <input id="product" value="Groww">
+      </div>
+      <div class="field">
+        <label for="start">Window start <span class="muted">(optional)</span></label>
+        <input id="start" type="date">
+      </div>
+      <div class="field">
+        <label for="end">Window end <span class="muted">(optional)</span></label>
+        <input id="end" type="date">
+      </div>
+      <div><button id="run-btn" onclick="trigger()">Run now</button></div>
+    </div>
+    <p class="muted" style="margin:10px 0 0">
+      Leave the dates blank for the last 8 weeks. Takes a few minutes; nothing
+      is sent until you approve it.
+    </p>
+    <div id="trigger-error" class="banner bad hide" style="margin-top:12px"></div>
+  </section>
+
+  <!-- Current run -->
+  <section id="current" class="card hide"></section>
+
+  <!-- History -->
+  <section class="card">
+    <h2>History</h2>
+    <div id="history"><p class="muted">Loading…</p></div>
+  </section>
+
+</main>
+
+<script>
+"use strict";
+
+let selectedId = null;
+let pollTimer = null;
+
+const LIVE = ["queued", "running", "delivering"];
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  let body = null;
+  try { body = await res.json(); } catch (_) { /* empty body */ }
+  if (!res.ok) throw new Error((body && body.detail) || res.statusText);
+  return body;
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+/* Render the trusted Markdown subset the report generator emits. Escaping
+   happens first, so review text can never inject HTML. */
+function renderReport(md) {
+  const out = [];
+  let inList = false;
+  for (const raw of String(md || "").split("\n")) {
+    const line = esc(raw.trim());
+    const close = () => { if (inList) { out.push("</ol>"); inList = false; } };
+
+    if (!line) { close(); continue; }
+    if (/^#{2,3}\s+/.test(line)) { close(); out.push(`<h2>${line.replace(/^#+\s*/, "")}</h2>`); }
+    else if (line.startsWith("&gt;")) { close(); out.push(`<blockquote>${line.replace(/^&gt;\s*/, "")}</blockquote>`); }
+    else if (/^\d+[.)]\s+/.test(line)) {
+      if (!inList) { out.push("<ol>"); inList = true; }
+      out.push(`<li>${line.replace(/^\d+[.)]\s*/, "")}</li>`);
+    }
+    else if (/^[-*]\s+/.test(line)) { close(); out.push(`<p>&bull; ${line.replace(/^[-*]\s*/, "")}</p>`); }
+    else { close(); out.push(`<p>${line}</p>`); }
+  }
+  if (inList) out.push("</ol>");
+  return out.join("").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+}
+
+function pill(status) {
+  return `<span class="pill s-${status}">${esc(status.replace(/_/g, " "))}</span>`;
+}
+
+async function trigger() {
+  const btn = document.getElementById("run-btn");
+  const err = document.getElementById("trigger-error");
+  btn.disabled = true;
+  err.classList.add("hide");
+
+  try {
+    const body = {
+      product: document.getElementById("product").value || null,
+      week_start: document.getElementById("start").value || null,
+      week_end: document.getElementById("end").value || null,
+    };
+    const res = await api("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    selectedId = res.run_id;
+    await refresh();
+  } catch (e) {
+    err.textContent = e.message;
+    err.classList.remove("hide");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function decide(id, action) {
+  if (action === "approve" &&
+      !confirm("Upload the PDF to Google Drive and create the email draft?")) return;
+  if (action === "reject" && !confirm("Reject this run? It cannot be delivered later.")) return;
+
+  document.querySelectorAll("#current button").forEach(b => (b.disabled = true));
+  try {
+    await api(`/api/runs/${id}/${action}`, { method: "POST" });
+    await refresh();
+  } catch (e) {
+    alert(e.message);
+    await refresh();
+  }
+}
+
+function renderCurrent(run) {
+  const box = document.getElementById("current");
+  if (!run) { box.classList.add("hide"); return; }
+  box.classList.remove("hide");
+
+  const live = LIVE.includes(run.status);
+  const parts = [];
+
+  parts.push(`<h2>Run ${esc(run.id)} &nbsp; ${pill(run.status)}</h2>`);
+  parts.push(`<p class="muted">${esc(run.product)} &middot;
+    ${esc(run.week_start)} to ${esc(run.week_end)}</p>`);
+
+  if (live) {
+    parts.push(`<p><span class="spin"></span>${esc(run.step || "Working…")}</p>`);
+  }
+
+  if (run.error) {
+    parts.push(`<div class="banner bad"><b>Failed.</b> ${esc(run.error)}</div>`);
+  }
+
+  if (run.status === "awaiting_approval" || run.status === "delivered" ||
+      run.status === "rejected") {
+    parts.push(`<div class="metrics">
+      <div class="metric"><b>${Number(run.review_count).toLocaleString()}</b><span>Reviews</span></div>
+      <div class="metric"><b>${run.theme_count}</b><span>Themes</span></div>
+      <div class="metric"><b>${run.validation_passed ? "Passed" : "Warnings"}</b><span>Validation</span></div>
+    </div>`);
+
+    if (!run.validation_passed && (run.validation_errors || []).length) {
+      parts.push(`<div class="banner warn"><b>Validation warnings:</b> ${
+        run.validation_errors.map(esc).join("; ")}</div>`);
+    }
+
+    if ((run.themes || []).length) {
+      parts.push("<h2 style='margin-top:18px'>Themes</h2>");
+      parts.push(run.themes.map(t => `<div class="theme">
+          <span>${esc(t.label)}</span>
+          <small>${Number(t.count).toLocaleString()} reviews${
+            t.avg_rating ? " &middot; " + t.avg_rating + "&#9733;" : ""}</small>
+        </div>`).join(""));
+    }
+
+    if (run.report_markdown) {
+      parts.push("<h2 style='margin-top:18px'>Report</h2>");
+      parts.push(`<div class="report">${renderReport(run.report_markdown)}</div>`);
+    }
+
+    if (run.fee_explainer) {
+      parts.push("<h2 style='margin-top:18px'>Fee explainer</h2>");
+      parts.push(`<div class="report">${renderReport(run.fee_explainer)}</div>`);
+    }
+  }
+
+  if (run.status === "awaiting_approval") {
+    parts.push(`<div class="banner warn" style="margin-top:16px">
+      Nothing has been sent yet. Approving uploads the PDF to Google Drive and
+      creates the email draft for the configured recipients.</div>`);
+    parts.push(`<div class="actions">
+      ${run.pdf_path ? `<a href="/api/runs/${run.id}/pdf"><button class="ghost">Download PDF</button></a>` : ""}
+      <button class="approve" onclick="decide('${run.id}','approve')">Approve &amp; send</button>
+      <button class="reject" onclick="decide('${run.id}','reject')">Reject</button>
+    </div>`);
+  }
+
+  if (run.status === "delivered") {
+    parts.push(`<div class="banner good" style="margin-top:16px">
+      Delivered${run.email_sent ? " &mdash; email draft created" : ""}.
+      ${run.pdf_url ? `<a href="${esc(run.pdf_url)}" target="_blank" rel="noopener">Open the PDF in Drive</a>` : ""}
+    </div>`);
+  }
+
+  if (run.status === "rejected") {
+    parts.push(`<div class="banner bad" style="margin-top:16px">
+      Rejected. Nothing was sent.</div>`);
+  }
+
+  box.innerHTML = parts.join("");
+}
+
+function renderHistory(runs) {
+  const box = document.getElementById("history");
+  if (!runs.length) {
+    box.innerHTML = `<p class="muted">No runs yet. Trigger one above.</p>`;
+    return;
+  }
+  box.innerHTML = `<table>
+    <thead><tr>
+      <th>Started</th><th>Product</th><th class="hide-sm">Window</th>
+      <th>Reviews</th><th>Status</th><th class="hide-sm">PDF</th>
+    </tr></thead>
+    <tbody>${runs.map(r => `
+      <tr class="clickable" onclick="select('${r.id}')">
+        <td class="mono">${esc((r.created_at || "").replace("T", " ").slice(0, 16))}</td>
+        <td>${esc(r.product)}</td>
+        <td class="hide-sm mono">${esc(r.week_start)} &rarr; ${esc(r.week_end)}</td>
+        <td>${Number(r.review_count || 0).toLocaleString()}</td>
+        <td>${pill(r.status)}</td>
+        <td class="hide-sm">${r.pdf_url
+          ? `<a href="${esc(r.pdf_url)}" target="_blank" rel="noopener"
+               onclick="event.stopPropagation()">Drive</a>` : "&mdash;"}</td>
+      </tr>`).join("")}</tbody></table>`;
+}
+
+async function select(id) {
+  selectedId = id;
+  await refresh();
+  document.getElementById("current").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function refresh() {
+  try {
+    const { runs } = await api("/api/runs");
+    renderHistory(runs);
+
+    // Follow whatever is live unless the user picked a specific run.
+    if (!selectedId) {
+      const live = runs.find(r => LIVE.includes(r.status) || r.status === "awaiting_approval");
+      if (live) selectedId = live.id;
+    }
+
+    if (selectedId) {
+      const run = await api(`/api/runs/${selectedId}`);
+      renderCurrent(run);
+      schedule(LIVE.includes(run.status) ? 2500 : 15000);
+    } else {
+      renderCurrent(null);
+      schedule(15000);
+    }
+  } catch (e) {
+    console.error("refresh failed", e);
+    schedule(8000);
+  }
+}
+
+function schedule(ms) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(refresh, ms);
+}
+
+refresh();
+</script>
+</body>
+</html>
