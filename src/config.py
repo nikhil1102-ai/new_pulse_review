@@ -81,8 +81,8 @@ REPRESENTATIVE_QUOTES_COUNT: int = 3  # quotes per cluster
 # ──────────────────────────────────────────────
 # Phase 4 — Report Generation (OpenAI-compatible LLM)
 # ──────────────────────────────────────────────
-OPENAI_API_BASE: str = os.getenv("OPENAI_API_BASE", "")
-OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_API_BASE: str = os.getenv("OPENAI_API_BASE", "https://api.groq.com/openai/v1")
+OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "openai/gpt-oss-120b")
 OPENAI_TEMPERATURE: float = float(os.getenv("OPENAI_TEMPERATURE", "0.3"))
 OPENAI_MAX_TOKENS: int = int(os.getenv("OPENAI_MAX_TOKENS", "2048"))
 MAX_REPORT_WORDS: int = int(os.getenv("MAX_REPORT_WORDS", "250"))
