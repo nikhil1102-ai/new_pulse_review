@@ -76,6 +76,146 @@ def _save_report_locally(
     return report_path
 
 
+# ── Email HTML builder ──────────────────────────────────────
+
+
+def _build_html_email(
+    report_markdown: str,
+    product: str,
+    week_start: str,
+    doc_url: str | None,
+) -> str:
+    """Convert the Markdown report to a styled HTML email body.
+
+    Handles:
+    - ``## Heading`` → bold ``<h3>`` section headers
+    - ``> quote``    → styled blockquote with left border
+    - ``N. item``    → ``<ol>`` numbered list
+    - ``---``        → ``<hr>`` divider
+    - Plain text     → ``<p>`` paragraph
+
+    A clickable Google Doc button is injected at the top when *doc_url*
+    is provided.
+    """
+    import re
+
+    html_parts: list[str] = []
+    in_ol = False
+
+    def _close_ol() -> None:
+        nonlocal in_ol
+        if in_ol:
+            html_parts.append("</ol>")
+            in_ol = False
+
+    for line in report_markdown.split("\n"):
+        # ── H2 section header ─────────────────────────────────
+        m = re.match(r"^##\s+(.+)", line)
+        if m:
+            _close_ol()
+            html_parts.append(
+                f'<h3 style="color:#1a1a2e;margin:28px 0 6px;'
+                f'padding-bottom:6px;border-bottom:2px solid #e8e8e8;">'
+                f"<strong>{m.group(1)}</strong></h3>"
+            )
+            continue
+
+        # ── Blockquote (user quotes) ──────────────────────────
+        m = re.match(r"^>\s*(.*)", line)
+        if m:
+            _close_ol()
+            quote = m.group(1).strip('"')
+            html_parts.append(
+                f'<blockquote style="border-left:4px solid #2196F3;'
+                f"margin:10px 0;padding:10px 16px;background:#f0f7ff;"
+                f'border-radius:0 6px 6px 0;font-style:italic;color:#555;">'
+                f"&ldquo;{quote}&rdquo;</blockquote>"
+            )
+            continue
+
+        # ── Numbered list item ────────────────────────────────
+        m = re.match(r"^\d+\.\s+(.+)", line)
+        if m:
+            if not in_ol:
+                html_parts.append(
+                    '<ol style="padding-left:22px;margin:8px 0;">'
+                )
+                in_ol = True
+            html_parts.append(
+                f'<li style="margin-bottom:8px;line-height:1.6;">'
+                f"{m.group(1)}</li>"
+            )
+            continue
+
+        # ── Horizontal rule ───────────────────────────────────
+        if line.strip() == "---":
+            _close_ol()
+            html_parts.append(
+                '<hr style="border:none;border-top:1px solid #e8e8e8;margin:20px 0;">'
+            )
+            continue
+
+        # ── Empty line ────────────────────────────────────────
+        if line.strip() == "":
+            _close_ol()
+            continue
+
+        # ── Normal paragraph ──────────────────────────────────
+        _close_ol()
+        html_parts.append(
+            f'<p style="margin:6px 0;line-height:1.7;">{line}</p>'
+        )
+
+    _close_ol()
+    content_html = "\n".join(html_parts)
+
+    # ── Google Doc button (shown at top when available) ───────
+    doc_button = ""
+    if doc_url:
+        doc_button = f"""
+        <div style="text-align:center;margin:20px 0 28px;">
+          <a href="{doc_url}"
+             style="display:inline-block;background:#1a73e8;color:white;
+                    text-decoration:none;font-weight:bold;font-size:14px;
+                    padding:12px 28px;border-radius:6px;">
+            &#128196;&nbsp; View Full Report in Google Docs &rarr;
+          </a>
+        </div>"""
+
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"></head>
+<body style="font-family:Arial,Helvetica,sans-serif;max-width:680px;
+             margin:0 auto;background:#f4f4f4;color:#333;">
+
+  <!-- Header banner -->
+  <div style="background:#1a1a2e;color:white;padding:28px 32px;
+              border-radius:8px 8px 0 0;">
+    <h1 style="margin:0;font-size:22px;font-weight:700;">
+      &#128202;&nbsp;{product} &mdash; Weekly Review Pulse
+    </h1>
+    <p style="margin:6px 0 0;opacity:0.75;font-size:14px;">Week of {week_start}</p>
+  </div>
+
+  <!-- Body card -->
+  <div style="background:white;padding:32px 36px;
+              border-radius:0 0 8px 8px;
+              box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+
+    {doc_button}
+    {content_html}
+
+  </div>
+
+  <!-- Footer -->
+  <p style="text-align:center;font-size:11px;color:#aaa;margin:16px 0 24px;">
+    Generated automatically by the AI Review Pulse Pipeline
+  </p>
+
+</body>
+</html>"""
+
+
 # ── MCP-based delivery ──────────────────────────────────────
 
 
@@ -149,14 +289,21 @@ def _send_email_via_rest(
     try:
         subject = f"{product} — Weekly Review Pulse — {week_start}"
 
-        body = report_markdown
+        # Plain-text fallback (doc link appended at bottom)
+        plain_body = report_markdown
         if doc_url:
-            body += f"\n\n---\nFull report: {doc_url}\n"
+            plain_body += f"\n\n---\nView full report: {doc_url}\n"
+
+        # Rich HTML version
+        html_body = _build_html_email(
+            report_markdown, product, week_start, doc_url
+        )
 
         result = create_email_draft(
             to=REPORT_RECIPIENTS,
             subject=subject,
-            body=body,
+            body=plain_body,
+            body_html=html_body,
         )
 
         if result.get("success"):

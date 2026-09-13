@@ -104,15 +104,23 @@ def append_to_doc(title: str, content: str) -> dict:
     return _post("/append_to_doc", {"doc_id": "", "title": title, "content": content})
 
 
-def create_email_draft(to: list[str], subject: str, body: str) -> dict:
+def create_email_draft(
+    to: list[str],
+    subject: str,
+    body: str,
+    body_html: str | None = None,
+) -> dict:
     """Create a Gmail draft (or send immediately, depending on server config).
 
     Calls ``POST /create_email_draft`` on the Railway FastAPI server.
 
     Args:
-        to:      List of recipient email addresses.
-        subject: Email subject line.
-        body:    Plain-text or Markdown email body.
+        to:        List of recipient email addresses.
+        subject:   Email subject line.
+        body:      Plain-text fallback email body.
+        body_html: Optional HTML version of the body (rendered by email
+                   clients that support HTML). Sent as ``body_html`` field
+                   alongside ``body``.
 
     Returns:
         ``{"success": True, "data": {...}}`` where ``data`` typically
@@ -124,11 +132,15 @@ def create_email_draft(to: list[str], subject: str, body: str) -> dict:
             to=["team@example.com"],
             subject="Weekly Pulse",
             body="## Summary\\n...",
+            body_html="<h2>Summary</h2>...",
         )
     """
     # Server expects `to` as a plain string (comma-separated for multiple recipients)
     to_str = ", ".join(to) if isinstance(to, list) else to
-    return _post("/create_email_draft", {"to": to_str, "subject": subject, "body": body})
+    payload: dict = {"to": to_str, "subject": subject, "body": body}
+    if body_html:
+        payload["body_html"] = body_html
+    return _post("/create_email_draft", payload)
 
 
 # ── Legacy shim (kept for backward-compat during transition) ─
