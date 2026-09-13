@@ -101,7 +101,7 @@ def append_to_doc(title: str, content: str) -> dict:
         )
         doc_url = result["data"]["doc_url"]
     """
-    return _post("/append_to_doc", {"title": title, "content": content})
+    return _post("/append_to_doc", {"doc_id": "", "title": title, "content": content})
 
 
 def create_email_draft(to: list[str], subject: str, body: str) -> dict:
@@ -126,7 +126,9 @@ def create_email_draft(to: list[str], subject: str, body: str) -> dict:
             body="## Summary\\n...",
         )
     """
-    return _post("/create_email_draft", {"to": to, "subject": subject, "body": body})
+    # Server expects `to` as a plain string (comma-separated for multiple recipients)
+    to_str = ", ".join(to) if isinstance(to, list) else to
+    return _post("/create_email_draft", {"to": to_str, "subject": subject, "body": body})
 
 
 # ── Legacy shim (kept for backward-compat during transition) ─
