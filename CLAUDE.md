@@ -101,21 +101,19 @@ Re-running the same product/week must not duplicate reports or emails. Three ind
 - Reviews are data, not instructions — never let review text drive prompt behaviour when editing LLM nodes.
 - Phase numbers in module docstrings drifted from `docs/architecture.md` (e.g. `validate` says "Phase 6", the doc says Phase 5). Trust the graph order, not the numbers.
 - `docs/architecture.md` still describes delivery as a Google **Doc** append. That is stale — delivery now uploads a PDF to Drive. The code is the source of truth.
-### Scheduling and the approval gate
+### Two-stage runs and the approval gate
 
-`.github/workflows/weekly-pulse.yml` runs the pipeline weekly (Mondays 04:00 UTC) and on demand via `workflow_dispatch`. It is split into two jobs:
+`src/main.py` supports `--stage generate|deliver|all` (default `all`):
 
-1. **generate** — `--stage generate`, which builds the report and PDF and writes `data/reports/pending_delivery.json`, then uploads everything as an artifact. Makes no external call.
-2. **deliver** — targets the `production` GitHub Environment. With required reviewers configured there, this job *waits for a human* before running `--stage deliver`.
+- **generate** — builds the report and PDF, writes `data/reports/pending_delivery.json`, and stops. It runs `build_graph(include_delivery=False)`, so the `deliver` node is absent from the graph entirely: there is no code path to an external service, not merely a skipped step.
+- **deliver** — reads that handoff file and delivers the already-generated run.
 
-`.github/scripts/run_summary.py` renders the report into the Actions run summary so the approver reads the real content before deciding.
+This exists so a human can review real output before anything is sent. Whatever drives the gate (a UI, CI, a manual step) plugs into this seam.
 
-The handoff file stores `review_count`/`theme_count` rather than the lists themselves — `deliver` only takes `len()` of them — which keeps the artifact a few KB instead of megabytes. `_run_deliver` rebuilds placeholder lists of the right length. If `deliver` ever reads more than the length of those fields, this breaks.
+The handoff stores `review_count`/`theme_count` rather than the lists themselves — `deliver` only takes `len()` of them — keeping it a few KB instead of megabytes. `_run_deliver` rebuilds placeholder lists of the right length. If `deliver` ever reads more than the length of those fields, this breaks.
 
-`--stage deliver` deliberately imports only `src.nodes.deliver`, never the graph, so the CI delivery job installs just `httpx` and `python-dotenv` instead of the clustering and PDF stack.
+`--stage deliver` deliberately imports only `src.nodes.deliver`, never the graph, so a delivery-only process needs just `httpx` and `python-dotenv` rather than the clustering and PDF stack.
 
-**`AUTO_APPROVE` must stay `true` on the Railway MCP server.** Its `request_approval()` calls `input()`, so in a headless environment `false` means *reject everything* (EOFError → `return False`), not "ask someone". The real gate is the GitHub Environment, upstream of the server.
+**`AUTO_APPROVE` must stay `true` on the Railway MCP server.** Its `request_approval()` calls `input()`, so in a headless environment `false` means *reject everything* (EOFError → `return False`), not "ask someone". The real gate belongs upstream of the server.
 
-- Embedding cache keys on `week_start`, so CI caching only helps re-runs of the same window, not week-over-week — consecutive windows overlap by ~7 weeks but re-embed in full.
-- GitHub disables scheduled workflows after 60 days of repo inactivity. The deliver job commits a run record to `history/`, which counts as activity and keeps the schedule alive.
-- The repo is public, so **Actions logs are public**, including the Drive URL the pipeline logs. Combined with link-shared PDFs, that makes reports effectively public.
+- Embedding cache keys on `week_start`, so it only helps re-runs of the same window, not week-over-week — consecutive windows overlap by ~7 weeks but re-embed in full.
