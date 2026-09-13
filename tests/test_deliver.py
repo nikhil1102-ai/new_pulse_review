@@ -9,6 +9,7 @@ Tests cover:
   - Full deliver node integration
 """
 
+import base64
 import json
 import os
 import pytest
@@ -118,38 +119,88 @@ class TestLocalReportSave:
 
 
 class TestGracefulFallbacks:
-    """Tests for MCP graceful fallbacks."""
+    """Delivery must degrade quietly when the REST server is unconfigured."""
 
-    def test_google_docs_skipped_without_mcp_url(self):
-        from src.nodes.deliver import _create_google_doc_via_mcp
+    def test_pdf_upload_skipped_without_server_url(self, tmp_path):
+        from src.nodes.deliver import _upload_pdf_via_rest
+
+        pdf = tmp_path / "report.pdf"
+        pdf.write_bytes(b"%PDF-1.4 fake")
 
         with patch("src.nodes.deliver.MCP_SERVER_URL", ""):
-            result = _create_google_doc_via_mcp(
-                SAMPLE_REPORT, "Groww", "2026-08-01"
-            )
+            result = _upload_pdf_via_rest(str(pdf))
 
         assert result is None
 
+    def test_pdf_upload_skipped_without_pdf(self):
+        """A missing PDF must not raise — email delivery still proceeds."""
+        from src.nodes.deliver import _upload_pdf_via_rest
+
+        with patch("src.nodes.deliver.MCP_SERVER_URL", "https://server.test"):
+            assert _upload_pdf_via_rest(None) is None
+            assert _upload_pdf_via_rest("/does/not/exist.pdf") is None
+
+    def test_pdf_upload_returns_url_from_server(self, tmp_path):
+        from src.nodes.deliver import _upload_pdf_via_rest
+
+        pdf = tmp_path / "report.pdf"
+        pdf.write_bytes(b"%PDF-1.4 fake")
+
+        with patch("src.nodes.deliver.MCP_SERVER_URL", "https://server.test"):
+            with patch(
+                "src.nodes.deliver.upload_to_drive",
+                return_value={"success": True,
+                              "data": {"file_url": "https://drive.test/abc"}},
+            ) as mock_upload:
+                result = _upload_pdf_via_rest(str(pdf))
+
+        assert result == "https://drive.test/abc"
+        assert mock_upload.call_args.kwargs["filename"] == "report.pdf"
+        assert mock_upload.call_args.kwargs["content"] == b"%PDF-1.4 fake"
+
     def test_gmail_skipped_without_recipients(self):
-        from src.nodes.deliver import _send_email_via_mcp
+        from src.nodes.deliver import _send_email_via_rest
 
         with patch("src.nodes.deliver.REPORT_RECIPIENTS", []):
-            result = _send_email_via_mcp(
+            result = _send_email_via_rest(
                 SAMPLE_REPORT, "Groww", "2026-08-01", None
             )
 
         assert result is False
 
     def test_gmail_skipped_without_mcp_url(self):
-        from src.nodes.deliver import _send_email_via_mcp
+        from src.nodes.deliver import _send_email_via_rest
 
         with patch("src.nodes.deliver.REPORT_RECIPIENTS", ["test@example.com"]):
             with patch("src.nodes.deliver.MCP_SERVER_URL", ""):
-                result = _send_email_via_mcp(
+                result = _send_email_via_rest(
                     SAMPLE_REPORT, "Groww", "2026-08-01", None
                 )
 
         assert result is False
+
+    def test_email_subject_and_pdf_link(self):
+        """Subject must match the spec and the body must carry the PDF link."""
+        from src.nodes.deliver import _send_email_via_rest
+
+        with patch("src.nodes.deliver.REPORT_RECIPIENTS", ["test@example.com"]):
+            with patch("src.nodes.deliver.MCP_SERVER_URL", "https://server.test"):
+                with patch(
+                    "src.nodes.deliver.create_email_draft",
+                    return_value={"success": True, "data": {}},
+                ) as mock_draft:
+                    sent = _send_email_via_rest(
+                        SAMPLE_REPORT, "Groww", "2026-08-01",
+                        "https://drive.test/abc",
+                    )
+
+        assert sent is True
+        kwargs = mock_draft.call_args.kwargs
+        assert kwargs["subject"].startswith(
+            "Weekly Product Pulse + Customer Clarification"
+        )
+        assert "https://drive.test/abc" in kwargs["body"]
+        assert "https://drive.test/abc" in kwargs["body_html"]
 
 
 class TestDeliverNode:
@@ -180,7 +231,7 @@ class TestDeliverNode:
         assert result["audit_record"]["review_count"] == 1
         assert result["audit_record"]["theme_count"] == 1
         assert result["email_sent"] is False
-        assert result["doc_url"] is None
+        assert result["pdf_url"] is None
 
         # Verify files were created
         files = os.listdir(tmp_path)
@@ -197,7 +248,7 @@ class TestDeliverNode:
         audit = {
             "product": "Groww",
             "week_start": "2026-08-01",
-            "doc_url": "https://docs.google.com/existing",
+            "pdf_url": "https://drive.google.com/existing",
             "email_sent": True,
         }
         audit_path = tmp_path / "audit_Groww_2026-08-01.json"
@@ -220,7 +271,7 @@ class TestDeliverNode:
         with patch("src.nodes.deliver.REPORTS_DIR", str(tmp_path)):
             result = deliver(state)
 
-        assert result["doc_url"] == "https://docs.google.com/existing"
+        assert result["pdf_url"] == "https://drive.google.com/existing"
         assert result["email_sent"] is True
 
     def test_audit_record_contains_required_fields(self, tmp_path):
@@ -246,9 +297,33 @@ class TestDeliverNode:
         audit = result["audit_record"]
         required_keys = [
             "product", "week_start", "week_end", "review_count",
-            "theme_count", "report_hash", "report_path", "doc_url",
+            "theme_count", "report_hash", "report_path", "pdf_url",
+            "pdf_path",
             "email_sent", "validation_passed", "timestamp",
             "fee_pain_point", "has_fee_explainer",
         ]
         for key in required_keys:
             assert key in audit, f"Missing audit key: {key}"
+
+
+class TestUploadToDriveClient:
+    """Tests for the REST client helper that ships the PDF."""
+
+    def test_encodes_payload_and_posts_to_correct_endpoint(self):
+        from src.mcp_client import upload_to_drive
+
+        with patch("src.mcp_client._post", return_value={"success": True}) as mock_post:
+            upload_to_drive("report.pdf", b"%PDF-1.4 body")
+
+        endpoint, payload = mock_post.call_args.args
+        assert endpoint == "/upload_to_drive"
+        assert payload["filename"] == "report.pdf"
+        assert payload["mime_type"] == "application/pdf"
+        assert base64.b64decode(payload["content_b64"]) == b"%PDF-1.4 body"
+
+    def test_raises_without_server_url(self):
+        from src.mcp_client import upload_to_drive
+
+        with patch("src.mcp_client.MCP_SERVER_URL", ""):
+            with pytest.raises(RuntimeError, match="MCP_SERVER_URL"):
+                upload_to_drive("report.pdf", b"data")

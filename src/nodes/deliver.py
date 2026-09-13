@@ -1,10 +1,11 @@
 """
-Phase 7 — Deliver report via REST server (Google Docs & Gmail) and write audit log.
+Phase 7 — Deliver report via REST server (Google Drive & Gmail) and write audit log.
 
 Channels:
-1. **Google Docs** — append the report to a Google Doc via ``POST /append_to_doc``
-   on the Railway-deployed FastAPI server
-2. **Gmail** — create an email draft via ``POST /create_email_draft`` on the same server
+1. **Google Drive** — upload the detailed PDF via ``POST /upload_to_drive`` on the
+   Railway-deployed FastAPI server, returning a shareable link
+2. **Gmail** — create an email draft via ``POST /create_email_draft`` on the same
+   server, carrying the ≤250-word summary and a button linking to the PDF
 3. **Audit log** — persist a JSON record of the run to ``data/reports/``
 
 The FastAPI server has OAuth credentials and token configuration embedded, so
@@ -22,10 +23,11 @@ from datetime import datetime, timezone
 
 from src.config import (
     MCP_SERVER_URL,
+    PDF_MIME_TYPE,
     REPORT_RECIPIENTS,
     REPORTS_DIR,
 )
-from src.mcp_client import append_to_doc, create_email_draft
+from src.mcp_client import create_email_draft, upload_to_drive
 from src.state import PipelineState
 
 logger = logging.getLogger(__name__)
@@ -83,7 +85,7 @@ def _build_html_email(
     report_markdown: str,
     product: str,
     week_start: str,
-    doc_url: str | None,
+    pdf_url: str | None,
 ) -> str:
     """Convert the Markdown report to a styled HTML email body.
 
@@ -94,8 +96,8 @@ def _build_html_email(
     - ``---``        → ``<hr>`` divider
     - Plain text     → ``<p>`` paragraph
 
-    A clickable Google Doc button is injected at the top when *doc_url*
-    is provided.
+    A clickable button linking to the detailed PDF is injected at the top
+    when *pdf_url* is provided.
     """
     import re
 
@@ -169,17 +171,20 @@ def _build_html_email(
     _close_ol()
     content_html = "\n".join(html_parts)
 
-    # ── Google Doc button (shown at top when available) ───────
+    # ── PDF button (shown at top when available) ──────────────
     doc_button = ""
-    if doc_url:
+    if pdf_url:
         doc_button = f"""
         <div style="text-align:center;margin:20px 0 28px;">
-          <a href="{doc_url}"
+          <a href="{pdf_url}"
              style="display:inline-block;background:#1a73e8;color:white;
                     text-decoration:none;font-weight:bold;font-size:14px;
                     padding:12px 28px;border-radius:6px;">
-            &#128196;&nbsp; View Full Report in Google Docs &rarr;
+            &#128196;&nbsp; Open the detailed PDF report &rarr;
           </a>
+          <div style="font-size:11px;color:#888;margin-top:8px;">
+            Full theme table, charts, fee analysis and methodology
+          </div>
         </div>"""
 
     return f"""<!DOCTYPE html>
@@ -219,50 +224,59 @@ def _build_html_email(
 # ── MCP-based delivery ──────────────────────────────────────
 
 
-def _create_google_doc_via_rest(
-    report_markdown: str, product: str, week_start: str
-) -> str | None:
-    """Append the report to a Google Doc via ``POST /append_to_doc``.
+def _upload_pdf_via_rest(pdf_path: str) -> str | None:
+    """Upload the detailed PDF to Google Drive via ``POST /upload_to_drive``.
 
-    Returns the Doc URL on success, or None if the server is unavailable.
+    Returns the shareable file URL on success, or None if the server is
+    unavailable, unconfigured, or the PDF was never produced.
     """
     if not MCP_SERVER_URL:
-        logger.warning(
-            "MCP_SERVER_URL not configured — skipping Google Doc creation."
-        )
+        logger.warning("MCP_SERVER_URL not configured — skipping PDF upload.")
+        return None
+
+    if not pdf_path or not os.path.exists(pdf_path):
+        logger.warning("No PDF available at %r — skipping upload.", pdf_path)
         return None
 
     try:
-        title = f"{product} — Weekly Pulse — {week_start}"
-        result = append_to_doc(title=title, content=report_markdown)
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+
+        result = upload_to_drive(
+            filename=os.path.basename(pdf_path),
+            content=pdf_bytes,
+            mime_type=PDF_MIME_TYPE,
+        )
 
         if result.get("success"):
             data = result.get("data")
-            # Extract doc_url from the response
             if isinstance(data, dict):
-                doc_url = data.get("doc_url") or data.get("url") or data.get("documentUrl")
-            elif isinstance(data, str):
-                # Server may return just the URL as a string
-                doc_url = data if data.startswith("http") else None
-            else:
-                doc_url = None
-
-            if doc_url:
-                logger.info("Google Doc created via REST: %s", doc_url)
-                return doc_url
-            else:
-                logger.warning(
-                    "POST /append_to_doc returned success but no URL. "
-                    "Response data: %s",
-                    data,
+                pdf_url = (
+                    data.get("file_url")
+                    or data.get("url")
+                    or data.get("webViewLink")
                 )
-                return None
+            elif isinstance(data, str):
+                pdf_url = data if data.startswith("http") else None
+            else:
+                pdf_url = None
 
-        logger.error("POST /append_to_doc failed: %s", result)
+            if pdf_url:
+                logger.info("PDF uploaded to Drive: %s", pdf_url)
+                return pdf_url
+
+            logger.warning(
+                "POST /upload_to_drive succeeded but returned no URL. "
+                "Response data: %s",
+                data,
+            )
+            return None
+
+        logger.error("POST /upload_to_drive failed: %s", result)
         return None
 
     except Exception as exc:
-        logger.error("REST Google Doc creation failed: %s", exc)
+        logger.error("PDF upload failed: %s", exc)
         return None
 
 
@@ -270,7 +284,7 @@ def _send_email_via_rest(
     report_markdown: str,
     product: str,
     week_start: str,
-    doc_url: str | None,
+    pdf_url: str | None,
 ) -> bool:
     """Create an email draft via ``POST /create_email_draft``.
 
@@ -287,16 +301,19 @@ def _send_email_via_rest(
         return False
 
     try:
-        subject = f"{product} — Weekly Review Pulse — {week_start}"
+        subject = (
+            f"Weekly Product Pulse + Customer Clarification — "
+            f"{product} — {week_start}"
+        )
 
-        # Plain-text fallback (doc link appended at bottom)
+        # Plain-text fallback (PDF link appended at bottom)
         plain_body = report_markdown
-        if doc_url:
-            plain_body += f"\n\n---\nView full report: {doc_url}\n"
+        if pdf_url:
+            plain_body += f"\n\n---\nDetailed PDF report: {pdf_url}\n"
 
         # Rich HTML version
         html_body = _build_html_email(
-            report_markdown, product, week_start, doc_url
+            report_markdown, product, week_start, pdf_url
         )
 
         result = create_email_draft(
@@ -341,11 +358,12 @@ def deliver(state: PipelineState) -> dict:
         - ``week_end``           — ISO date
         - ``validation_passed``  — whether validation passed
         - ``validation_errors``  — any validation warnings
+        - ``pdf_path``           — local path to the detailed PDF, if built
 
     **Output**::
 
         {
-            "doc_url": str | None,
+            "pdf_url": str | None,
             "email_sent": bool,
             "audit_record": dict
         }
@@ -360,6 +378,7 @@ def deliver(state: PipelineState) -> dict:
     week_end = state.get("week_end", "")
     validation_passed = state.get("validation_passed", False)
     validation_errors = state.get("validation_errors", [])
+    pdf_path = state.get("pdf_path")
 
     # ── Combine report + fee explainer for delivery ──────────
     full_content = report_markdown
@@ -380,7 +399,7 @@ def deliver(state: PipelineState) -> dict:
             week_start,
         )
         return {
-            "doc_url": existing_audit.get("doc_url"),
+            "pdf_url": existing_audit.get("pdf_url"),
             "email_sent": existing_audit.get("email_sent", False),
             "audit_record": existing_audit,
         }
@@ -388,12 +407,12 @@ def deliver(state: PipelineState) -> dict:
     # ── Save report locally (always) ─────────────────────────
     report_path = _save_report_locally(full_content, product, week_start)
 
-    # ── Google Docs (via REST /append_to_doc) ───────────────
-    doc_url = _create_google_doc_via_rest(full_content, product, week_start)
+    # ── Google Drive (via REST /upload_to_drive) ─────────────
+    pdf_url = _upload_pdf_via_rest(pdf_path)
 
     # ── Gmail (via REST /create_email_draft) ─────────────────
     email_sent = _send_email_via_rest(
-        full_content, product, week_start, doc_url
+        full_content, product, week_start, pdf_url
     )
 
     # ── Audit log ────────────────────────────────────────────
@@ -405,7 +424,8 @@ def deliver(state: PipelineState) -> dict:
         "theme_count": len(clusters),
         "report_hash": _compute_report_hash(full_content),
         "report_path": report_path,
-        "doc_url": doc_url,
+        "pdf_path": pdf_path,
+        "pdf_url": pdf_url,
         "email_sent": email_sent,
         "validation_passed": validation_passed,
         "validation_errors": validation_errors,
@@ -419,13 +439,13 @@ def deliver(state: PipelineState) -> dict:
     _save_audit_log(audit_record, product, week_start)
 
     logger.info(
-        "Delivery complete — Doc: %s | Email: %s | Audit logged.",
-        doc_url or "(local only)",
+        "Delivery complete — PDF: %s | Email: %s | Audit logged.",
+        pdf_url or "(local only)",
         email_sent,
     )
 
     return {
-        "doc_url": doc_url,
+        "pdf_url": pdf_url,
         "email_sent": email_sent,
         "audit_record": audit_record,
     }

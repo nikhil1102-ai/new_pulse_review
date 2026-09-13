@@ -101,8 +101,10 @@ def main() -> None:
 
     # ── Summary ──────────────────────────────────────────────
     logger.info("Pipeline complete.")
-    if final_state.get("doc_url"):
-        logger.info("Report URL: %s", final_state["doc_url"])
+    if final_state.get("pdf_path"):
+        logger.info("Detailed PDF: %s", final_state["pdf_path"])
+    if final_state.get("pdf_url"):
+        logger.info("PDF URL   : %s", final_state["pdf_url"])
     if final_state.get("email_sent"):
         logger.info("Email sent successfully.")
     if not final_state.get("validation_passed"):

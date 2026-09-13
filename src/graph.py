@@ -11,7 +11,7 @@ Pipeline flow::
     → chunk → batch_prepare → embed → cache_vectors
     → cluster → label_themes → identify_fee_issue
     → generate_report → generate_fee_explainer
-    → validate → [retry or deliver] → END
+    → validate → [retry or generate_pdf] → deliver → END
 """
 
 import logging
@@ -35,6 +35,7 @@ from src.nodes.identify_fee_issue import identify_fee_issue
 from src.nodes.generate_report import generate_report
 from src.nodes.generate_fee_explainer import generate_fee_explainer
 from src.nodes.validate import validate
+from src.nodes.generate_pdf import generate_pdf
 from src.nodes.deliver import deliver
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ workflow.add_node("identify_fee_issue", identify_fee_issue)
 workflow.add_node("generate_report", generate_report)
 workflow.add_node("generate_fee_explainer", generate_fee_explainer)
 workflow.add_node("validate", validate)
+workflow.add_node("generate_pdf", generate_pdf)
 workflow.add_node("deliver", deliver)
 
 # ── Sequential edges ─────────────────────────────────────────
@@ -93,10 +95,14 @@ def should_retry_report(state: PipelineState) -> str:
             "Validation failed after %d retries. Proceeding to delivery with warnings.",
             MAX_VALIDATION_RETRIES,
         )
-    return "deliver"
+    return "generate_pdf"
 
 
 workflow.add_conditional_edges("validate", should_retry_report)
+
+# PDF generation sits between validation and delivery, so the document
+# exists on disk before any external call is made.
+workflow.add_edge("generate_pdf", "deliver")
 
 # Terminal edge
 workflow.add_edge("deliver", END)

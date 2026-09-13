@@ -96,6 +96,12 @@ FUZZY_MATCH_THRESHOLD: int = int(os.getenv("FUZZY_MATCH_THRESHOLD", "85"))
 MAX_VALIDATION_RETRIES: int = int(os.getenv("MAX_VALIDATION_RETRIES", "2"))
 
 # ──────────────────────────────────────────────
+# Phase 6b — Detailed PDF report
+# ──────────────────────────────────────────────
+PDF_ENABLED: bool = os.getenv("PDF_ENABLED", "true").lower() != "false"
+PDF_MIME_TYPE: str = "application/pdf"
+
+# ──────────────────────────────────────────────
 # Data paths (relative to project root)
 # ──────────────────────────────────────────────
 DATA_DIR: str = os.getenv("DATA_DIR", "data")

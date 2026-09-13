@@ -2,6 +2,7 @@
 REST client utility for communicating with the Railway-deployed FastAPI server.
 
 Provides synchronous helper functions to call the server's REST endpoints:
+- ``POST /upload_to_drive``    — upload the detailed PDF to Google Drive
 - ``POST /append_to_doc``      — append report content to a Google Doc
 - ``POST /create_email_draft`` — create a Gmail draft (or send directly)
 
@@ -10,6 +11,7 @@ so the client only needs the server URL (``MCP_SERVER_URL``) to connect.
 No SSE or MCP protocol overhead — plain JSON over HTTPS.
 """
 
+import base64
 import logging
 
 import httpx
@@ -102,6 +104,44 @@ def append_to_doc(title: str, content: str) -> dict:
         doc_url = result["data"]["doc_url"]
     """
     return _post("/append_to_doc", {"doc_id": "", "title": title, "content": content})
+
+
+def upload_to_drive(
+    filename: str,
+    content: bytes,
+    mime_type: str = "application/pdf",
+) -> dict:
+    """Upload a binary file to Google Drive and return its shareable URL.
+
+    Calls ``POST /upload_to_drive`` on the Railway FastAPI server. The binary
+    is base64-encoded for JSON transport; the server decodes it, uploads via
+    the Drive API using its own OAuth credentials, and returns a link.
+
+    Args:
+        filename:  Destination filename, e.g. ``groww_pulse_2026-09-07.pdf``.
+        content:   Raw file bytes.
+        mime_type: MIME type of *content*.
+
+    Returns:
+        ``{"success": True, "data": {...}}`` where ``data`` typically
+        contains ``file_url`` and ``file_id``.
+
+    Example::
+
+        result = upload_to_drive("pulse.pdf", pdf_bytes)
+        url = result["data"]["file_url"]
+    """
+    payload = {
+        "filename": filename,
+        "mime_type": mime_type,
+        "content_b64": base64.b64encode(content).decode("ascii"),
+    }
+    logger.info(
+        "Uploading %s to Drive (%.1f KB before encoding)",
+        filename,
+        len(content) / 1024,
+    )
+    return _post("/upload_to_drive", payload)
 
 
 def create_email_draft(

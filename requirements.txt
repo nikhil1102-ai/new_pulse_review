@@ -26,6 +26,10 @@ rapidfuzz>=3.5.0
 # Delivery (REST calls to Railway FastAPI server — Google Docs + Gmail)
 httpx>=0.27.0
 
+# Detailed PDF report (renderer + charts)
+reportlab>=4.0.0
+matplotlib>=3.8.0
+
 # Deduplication
 datasketch>=1.6.0
 

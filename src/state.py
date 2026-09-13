@@ -51,7 +51,11 @@ class PipelineState(TypedDict, total=False):
     # ── Phase 4b — Fee Explainer ─────────────────────────────
     fee_explainer: str                  # generated fee explanation (≤6 bullets)
 
-    # ── Phase 6 — Delivery ───────────────────────────────────
-    doc_url: Optional[str]              # Google Doc link
+    # ── Phase 6b — Detailed PDF ──────────────────────────────
+    insights: dict                      # analytics bundle for the PDF
+    pdf_path: Optional[str]             # local path to the rendered PDF
+
+    # ── Phase 7 — Delivery ───────────────────────────────────
+    pdf_url: Optional[str]              # Google Drive link to the PDF
     email_sent: bool
     audit_record: dict                  # full run metadata
