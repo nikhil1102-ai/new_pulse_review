@@ -89,6 +89,13 @@ OPENAI_TEMPERATURE: float = float(os.getenv("OPENAI_TEMPERATURE", "0.3"))
 OPENAI_MAX_TOKENS: int = int(os.getenv("OPENAI_MAX_TOKENS", "2048"))
 MAX_REPORT_WORDS: int = int(os.getenv("MAX_REPORT_WORDS", "250"))
 
+# Theme labelling asks for only a few words back, but the default model is a
+# reasoning model that spends tokens thinking first. Too small a ceiling and
+# the reasoning consumes the whole budget, the response content comes back
+# empty, and every theme falls back to a placeholder name.
+OPENAI_LABEL_MAX_TOKENS: int = int(os.getenv("OPENAI_LABEL_MAX_TOKENS", "512"))
+THEME_LABEL_MAX_WORDS: int = int(os.getenv("THEME_LABEL_MAX_WORDS", "6"))
+
 # ──────────────────────────────────────────────
 # Phase 5 — Validation
 # ──────────────────────────────────────────────

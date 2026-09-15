@@ -63,7 +63,7 @@ def _summarise_themes(clusters: list[dict], insights: dict | None) -> list[dict]
 
     return [
         {
-            "label": c.get("label") or f"Theme {i + 1}",
+            "label": c.get("label") or f"Unnamed theme {i + 1}",
             "count": len(c.get("review_ids", [])),
             "share_pct": 0,
             "avg_rating": 0,

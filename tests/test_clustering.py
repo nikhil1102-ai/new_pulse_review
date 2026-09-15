@@ -356,8 +356,8 @@ class TestLabelThemesNode:
         assert mock_llm.invoke.call_count == 5
 
     @patch("src.nodes.label_themes.ChatOpenAI")
-    def test_openai_failure_fallback_label(self, MockChatOpenAI):
-        """On OpenAI error, cluster should get a fallback 'Cluster N' label."""
+    def test_openai_failure_falls_back_to_cluster_vocabulary(self, MockChatOpenAI):
+        """On API error the label comes from the reviews, not a position number."""
         mock_llm = MagicMock()
         mock_llm.invoke.side_effect = RuntimeError("API error")
         MockChatOpenAI.return_value = mock_llm
@@ -366,14 +366,18 @@ class TestLabelThemesNode:
 
         state = {
             "clusters": [
-                {"label": None, "review_ids": ["r1"], "centroid_quotes": []},
+                {"label": None, "review_ids": ["r1", "r2"], "centroid_quotes": []},
             ],
-            "cleaned_reviews": [_make_review("r1", "Some review")],
+            "cleaned_reviews": [
+                _make_review("r1", "Withdrawal is pending for three days"),
+                _make_review("r2", "Withdrawal still pending, money not credited"),
+            ],
         }
 
-        result = label_themes(state)
+        label = label_themes(state)["clusters"][0]["label"]
 
-        assert result["clusters"][0]["label"] == "Cluster 1"
+        assert "withdrawal" in label.lower() or "pending" in label.lower()
+        assert not label.lower().startswith(("theme ", "cluster "))
 
     def test_empty_clusters_returns_empty(self):
         """No clusters → no labelling, empty list returned."""
@@ -437,3 +441,156 @@ class TestLabelThemesNode:
 
         assert "App is very slow" in user_msg
         assert "Performance is terrible" in user_msg
+
+
+# ──────────────────────────────────────────────────────────────
+# label_themes.py — label quality and fallbacks
+# ──────────────────────────────────────────────────────────────
+
+
+class TestLabelCleaning:
+    """``_clean_label`` must salvage a usable name from messy model output."""
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("App crashes during market hours", "App crashes during market hours"),
+        ('  "Fund withdrawal delays"  ', "Fund withdrawal delays"),
+        ("**Hidden brokerage charges**", "Hidden brokerage charges"),
+        ("`KYC delays`", "KYC delays"),
+        ("Theme: KYC verification delays", "KYC verification delays"),
+        ("Category - Order failures", "Order failures"),
+        ("- Slow customer support", "Slow customer support"),
+        ("1. Order execution failures", "Order execution failures"),
+        ("App crashes.", "App crashes"),
+        ("Multiple   inner    spaces", "Multiple inner spaces"),
+    ])
+    def test_strips_model_wrappers(self, raw, expected):
+        from src.nodes.label_themes import _clean_label
+        assert _clean_label(raw) == expected
+
+    def test_takes_final_line_when_reasoning_leaks(self):
+        """A reasoning model may narrate before naming the theme."""
+        from src.nodes.label_themes import _clean_label
+        leaked = "Let me consider these reviews.\nOrder placement failures"
+        assert _clean_label(leaked) == "Order placement failures"
+
+    @pytest.mark.parametrize("raw", ["", None, "   ", "\n\n"])
+    def test_empty_input_rejected(self, raw):
+        from src.nodes.label_themes import _clean_label
+        assert _clean_label(raw) == ""
+
+    @pytest.mark.parametrize("raw", [
+        "Theme 1", "theme 2", "Cluster 3", "General", "Other",
+        "Feedback", "Negative feedback", "N/A", "Unknown",
+    ])
+    def test_placeholder_labels_rejected(self, raw):
+        """The point of the fix: a meaningless label is worse than none."""
+        from src.nodes.label_themes import _clean_label
+        assert _clean_label(raw) == ""
+
+    def test_caps_word_count(self):
+        from src.config import THEME_LABEL_MAX_WORDS
+        from src.nodes.label_themes import _clean_label
+        long_label = " ".join(f"word{i}" for i in range(20))
+        assert len(_clean_label(long_label).split()) == THEME_LABEL_MAX_WORDS
+
+
+class TestKeywordFallback:
+    """``_keyword_label`` names a cluster from its own vocabulary."""
+
+    def test_picks_distinctive_terms(self):
+        from src.nodes.label_themes import _keyword_label
+        label = _keyword_label([
+            "Why was I charged extra brokerage on my trade",
+            "Hidden charges deducted from my account again",
+            "Brokerage charges are not explained anywhere",
+        ])
+        assert "harge" in label.lower() or "brokerage" in label.lower()
+
+    def test_excludes_stopwords(self):
+        from src.nodes.label_themes import _keyword_label
+        label = _keyword_label(["the app is very good and the app is the best"] * 5)
+        assert "the" not in label.lower().split(", ")
+
+    def test_empty_input_gives_empty_label(self):
+        from src.nodes.label_themes import _keyword_label
+        assert _keyword_label([]) == ""
+
+
+class TestLabelThemesRobustness:
+    """The node must never emit a bare positional name when text is available."""
+
+    @staticmethod
+    def _state():
+        return {
+            "clusters": [{"label": None, "review_ids": ["r1", "r2"],
+                          "centroid_quotes": ["q"]}],
+            "cleaned_reviews": [
+                _make_review("r1", "Brokerage charges deducted without explanation"),
+                _make_review("r2", "Hidden brokerage charges everywhere"),
+            ],
+        }
+
+    @patch("src.nodes.label_themes.ChatOpenAI")
+    def test_empty_model_response_falls_back_to_keywords(self, MockChatOpenAI):
+        """The original bug: a reasoning model returning empty content."""
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(content="")
+        MockChatOpenAI.return_value = mock_llm
+
+        from src.nodes.label_themes import label_themes
+        label = label_themes(self._state())["clusters"][0]["label"]
+
+        assert label
+        assert not label.lower().startswith("theme ")
+        assert "brokerage" in label.lower() or "charges" in label.lower()
+
+    @patch("src.nodes.label_themes.ChatOpenAI")
+    def test_retries_once_before_falling_back(self, MockChatOpenAI):
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [
+            MagicMock(content=""),
+            MagicMock(content="Hidden brokerage charges"),
+        ]
+        MockChatOpenAI.return_value = mock_llm
+
+        from src.nodes.label_themes import label_themes
+        result = label_themes(self._state())
+
+        assert mock_llm.invoke.call_count == 2
+        assert result["clusters"][0]["label"] == "Hidden brokerage charges"
+
+    @patch("src.nodes.label_themes.ChatOpenAI")
+    def test_placeholder_from_model_is_replaced(self, MockChatOpenAI):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(content="Theme 1")
+        MockChatOpenAI.return_value = mock_llm
+
+        from src.nodes.label_themes import label_themes
+        label = label_themes(self._state())["clusters"][0]["label"]
+
+        assert label != "Theme 1"
+        assert "brokerage" in label.lower() or "charges" in label.lower()
+
+    @patch("src.nodes.label_themes.ChatOpenAI")
+    def test_api_error_still_yields_a_meaningful_label(self, MockChatOpenAI):
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = RuntimeError("503 from provider")
+        MockChatOpenAI.return_value = mock_llm
+
+        from src.nodes.label_themes import label_themes
+        label = label_themes(self._state())["clusters"][0]["label"]
+
+        assert label
+        assert not label.lower().startswith("theme ")
+
+    @patch("src.nodes.label_themes.ChatOpenAI")
+    def test_uses_a_generous_token_budget(self, MockChatOpenAI):
+        """Too small a ceiling is what produced empty labels originally."""
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(content="Order failures")
+        MockChatOpenAI.return_value = mock_llm
+
+        from src.nodes.label_themes import label_themes
+        label_themes(self._state())
+
+        assert MockChatOpenAI.call_args.kwargs["max_tokens"] >= 256

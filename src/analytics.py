@@ -168,7 +168,7 @@ def compute_theme_breakdown(
         breakdown.append(
             {
                 "rank": cluster.get("rank", idx + 1),
-                "label": cluster.get("label") or f"Theme {idx + 1}",
+                "label": cluster.get("label") or f"Unnamed theme {idx + 1}",
                 "count": len(review_ids),
                 "share_pct": _pct(len(review_ids), total_clustered),
                 "avg_rating": _mean(ratings),

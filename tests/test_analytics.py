@@ -201,10 +201,14 @@ class TestThemeBreakdown:
         assert angry["thumbs_up"] == 90  # 50 + 30 + 10
 
     def test_unlabelled_cluster_gets_placeholder(self, reviews):
+        """A safety net only: label_themes should always supply a real name."""
         themes = compute_theme_breakdown(
             [{"label": None, "review_ids": ["r1"]}], reviews
         )
-        assert themes[0]["label"].startswith("Theme")
+        label = themes[0]["label"]
+        assert label
+        # Must not read as a bare positional name in the report.
+        assert label.startswith("Unnamed theme")
 
     def test_tolerates_review_ids_missing_from_corpus(self, reviews):
         themes = compute_theme_breakdown(
